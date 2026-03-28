@@ -1,0 +1,18 @@
+services:
+  video-aligner:
+    build:
+      context: ../..
+      dockerfile: src/contApp/Dockerfile
+    ports:
+      - "5000:5000"
+    volumes:
+      # Mount a local directory for video files
+      - /videos:/videos
+      # Mount ffmpeg/ffprobe binaries (override container defaults)
+      # - /usr/local/bin/ffmpeg:/usr/local/bin/ffmpeg:ro
+      # - /usr/local/bin/ffprobe:/usr/local/bin/ffprobe:ro
+    environment:
+      # Override ffmpeg/ffprobe paths if mounted from host
+      # - FFMPEG_PATH=/usr/local/bin/ffmpeg
+      # - FFPROBE_PATH=/usr/local/bin/ffprobe
+    restart: unless-stopped
