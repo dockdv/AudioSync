@@ -11,56 +11,21 @@ Useful when you have two recordings of the same content (e.g., different camera 
 - Multi-audio track selection and metadata editing
 - FFmpeg-based merge with progress tracking
 - Server-side file browser and drag-and-drop upload
-- Cross-platform: Windows, Linux, macOS, Docker
 
-## Windows Standalone
-
-Download `AudioSync.exe` from the [latest release](https://github.com/dockdv/AudioSync/releases/latest). Place `ffmpeg.exe` and `ffprobe.exe` in the same folder (or ensure they are on PATH), then run `AudioSync.exe` and open http://localhost:5000.
-
-## webGUI
-
-### Requirements
-
-- Python 3.10+
-- FFmpeg and FFprobe on PATH (or set `FFMPEG_PATH` / `FFPROBE_PATH` environment variables)
-
-### Linux / macOS
+## Quick Start
 
 ```bash
-cd src/webGUI
-./start.sh
-```
-
-### Windows
-
-```cmd
-src\webGUI\start.bat
+docker run -p 5000:5000 -v /path/to/videos:/videos dockdv/audiosync:latest
 ```
 
 Then open http://localhost:5000.
 
-## Docker
-
-### Build and run
-
-```bash
-docker build -t audiosync -f src/contApp/Dockerfile .
-docker run -p 5000:5000 -v /path/to/videos:/videos audiosync
-```
-
-### Docker Compose
-
-```bash
-cd src/contApp
-docker compose up --build
-```
-
-### Docker Compose (published image)
+## Docker Compose
 
 ```yaml
 services:
   audiosync:
-    image: ghcr.io/dockdv/audiosync:latest
+    image: dockdv/audiosync:latest
     ports:
       - 5000:5000
     volumes:
@@ -73,8 +38,17 @@ services:
     restart: unless-stopped
 ```
 
-Then open http://localhost:5000.
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `FFMPEG_PATH` | Custom path to ffmpeg binary |
+| `FFPROBE_PATH` | Custom path to ffprobe binary |
+
+## Source Code
+
+https://github.com/dockdv/AudioSync
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/dockdv/AudioSync/blob/main/LICENSE)
