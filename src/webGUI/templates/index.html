@@ -49,12 +49,11 @@ body {
     color: var(--ac);
 }
 .file-row input[type="text"] { flex: 1; }
-.file-row .file-info {
+.file-info {
     font-family: 'Consolas', monospace;
     font-size: 11px;
     color: var(--dim);
-    min-width: 100px;
-    text-align: right;
+    padding-left: 76px;
 }
 .grid {
     display: grid;
@@ -259,18 +258,18 @@ input[type="checkbox"] { accent-color: var(--ac); }
             <button onclick="browseServer(1)">Browse Server...</button>
             <button onclick="uploadVideo(1)">Upload...</button>
             <button class="btn-accent btn-sm" onclick="loadVideo(1)">Load</button>
-            <span class="file-info" id="v1-file-info"></span>
             <input type="file" id="v1-upload" accept="video/*" class="hidden">
         </div>
+        <div class="file-info" id="v1-file-info"></div>
         <div class="file-row">
             <span class="label">Video 2</span>
             <input type="text" id="v2-path-input" placeholder="Audio source video...">
             <button onclick="browseServer(2)">Browse Server...</button>
             <button onclick="uploadVideo(2)">Upload...</button>
             <button class="btn-accent btn-sm" onclick="loadVideo(2)">Load</button>
-            <span class="file-info" id="v2-file-info"></span>
             <input type="file" id="v2-upload" accept="video/*" class="hidden">
         </div>
+        <div class="file-info" id="v2-file-info"></div>
     </div>
 
     <div class="grid">
@@ -279,7 +278,6 @@ input[type="checkbox"] { accent-color: var(--ac); }
             <div class="panel-title">Video 1 Audio (all kept)</div>
             <div class="panel-body">
                 <div id="v1-tracks"><span class="text-dim text-sm">Load Video 1...</span></div>
-                <div class="status-label text-sm" id="v1-track-status"></div>
             </div>
         </div>
 
@@ -287,7 +285,6 @@ input[type="checkbox"] { accent-color: var(--ac); }
             <div class="panel-title">Video 2 Audio (select tracks to merge)</div>
             <div class="panel-body">
                 <div id="v2-tracks"><span class="text-dim text-sm">Load Video 2...</span></div>
-                <div class="status-label text-sm" id="v2-track-status"></div>
                 <div class="row mt-4">
                     <label class="text-sm" style="min-width:auto">Manual indices:</label>
                     <input type="text" id="v2-manual" value="0" style="width:80px" placeholder="0,1,2">
@@ -313,7 +310,6 @@ input[type="checkbox"] { accent-color: var(--ac); }
                     <button class="btn-red hidden" id="align-stop" onclick="cancelTask('align')">Stop</button>
                 </div>
                 <div class="progress-bar" id="align-progress"><div class="fill"></div></div>
-                <div class="status-label text-sm text-mono" id="align-status"></div>
             </div>
         </div>
 
@@ -329,7 +325,6 @@ input[type="checkbox"] { accent-color: var(--ac); }
                     <input type="text" id="offset-input" value="0.000" style="width:130px">
                 </div>
                 <button class="btn-sm mt-4" onclick="updateParams()">Update Parameters</button>
-                <div class="status-label text-sm mt-4" id="container-info">Load Video 1 to see output format</div>
                 <button class="btn-blue btn-sm mt-4" onclick="openMetadataEditor()">Edit Track Titles / Languages...</button>
             </div>
         </div>
@@ -355,7 +350,6 @@ input[type="checkbox"] { accent-color: var(--ac); }
                     <button class="btn-red hidden" id="merge-stop" onclick="cancelTask('merge')">Stop</button>
                 </div>
                 <div class="progress-bar" id="merge-progress"><div class="fill"></div></div>
-                <div class="status-label text-sm" id="merge-status"></div>
                 <button class="btn-sm mt-4" onclick="clearAll()" style="width:100%">Clear All</button>
             </div>
         </div>
@@ -433,18 +427,13 @@ async function loadVideo(n) {
     if (!filepath) return;
 
     const fileInfo = document.getElementById(`v${n}-file-info`);
-    const trackStatus = document.getElementById(`v${n}-track-status`);
 
     fileInfo.textContent = 'Probing...';
-    trackStatus.textContent = 'Detecting...';
-    trackStatus.className = 'status-label text-sm text-blue';
     log(`[V${n}] Probing ${basename(filepath)}...`);
 
     const result = await apiPost('/api/probe', { filepath });
     if (result.error) {
         fileInfo.textContent = 'Error';
-        trackStatus.textContent = result.error;
-        trackStatus.className = 'status-label text-sm text-err';
         log(`[V${n}] Probe error: ${result.error}`);
         return;
     }
@@ -461,21 +450,13 @@ async function loadVideo(n) {
     if (n === 1) {
         state.containerChange = result.container_change;
         state.containerExt = result.container_ext;
-        const cinfo = document.getElementById('container-info');
         if (result.container_change) {
-            cinfo.textContent = `Container '${result.container_ext}' → output will use .mkv`;
-            cinfo.className = 'status-label text-sm text-warn';
-        } else {
-            cinfo.textContent = `Container '${result.container_ext}' supports multi-audio`;
-            cinfo.className = 'status-label text-sm text-green';
+            log(`[V1] Container '${result.container_ext}' does not support multi-audio, output will use .mkv`);
         }
     }
 
     fillTracks(n, result.tracks, result.method, result.error);
     updateSyncCombos();
-
-    trackStatus.textContent = `${result.method}: ${result.tracks.length} track(s)`;
-    trackStatus.className = 'status-label text-sm text-green';
 }
 
 function fillTracks(n, tracks, method, error) {
@@ -564,12 +545,10 @@ async function runAlign() {
     const alignBtn = document.getElementById('align-btn');
     const alignStop = document.getElementById('align-stop');
     const progressBar = document.getElementById('align-progress');
-    const statusEl = document.getElementById('align-status');
 
     alignBtn.disabled = true;
     alignStop.classList.remove('hidden');
     progressBar.classList.add('progress-indeterminate');
-    statusEl.textContent = 'Starting audio alignment...';
     clearLog();
     log('[Align] Starting...');
 
@@ -585,7 +564,6 @@ async function runAlign() {
         alignBtn.disabled = false;
         alignStop.classList.add('hidden');
         progressBar.classList.remove('progress-indeterminate');
-        statusEl.textContent = `Error: ${result.error}`;
         log(`[Align] Error: ${result.error}`);
         return;
     }
@@ -593,17 +571,15 @@ async function runAlign() {
     state.tasks.align = result.task_id;
     pollTask('align', result.task_id, (task) => {
         if (task.status === 'running') {
-            statusEl.textContent = task.progress || 'Processing...';
+            log(`[Align] ${task.progress || 'Processing...'}`);
         } else {
             alignBtn.disabled = false;
             alignStop.classList.add('hidden');
             progressBar.classList.remove('progress-indeterminate');
             if (task.status === 'done') {
                 showAlignResults(task.result);
-                statusEl.textContent = `Done: ${task.result.inlier_count} inliers, max residual ${(task.result.residual_max || 0).toFixed(3)}s`;
                 log(`[Align] Done: ${task.result.inlier_count} inliers, atempo=${task.result.speed_ratio.toFixed(6)}, offset=${task.result.offset.toFixed(3)}s`);
             } else {
-                statusEl.textContent = `Error: ${task.error || 'Failed'}`;
                 log(`[Align] Error: ${task.error}`);
             }
         }
@@ -709,12 +685,10 @@ async function runMerge() {
     const mergeBtn = document.getElementById('merge-btn');
     const mergeStop = document.getElementById('merge-stop');
     const progressBar = document.getElementById('merge-progress');
-    const statusEl = document.getElementById('merge-status');
 
     mergeBtn.disabled = true;
     mergeStop.classList.remove('hidden');
     progressBar.querySelector('.fill').style.width = '0%';
-    setStatus('Merging...');
     clearLog();
     log('[Merge] Starting...');
 
@@ -724,7 +698,6 @@ async function runMerge() {
     if (result.error) {
         mergeBtn.disabled = false;
         mergeStop.classList.add('hidden');
-        statusEl.textContent = `Error: ${result.error}`;
         log(`[Merge] Error: ${result.error}`);
         return;
     }
@@ -737,22 +710,19 @@ async function runMerge() {
             if (muxMatch) {
                 const pct = parseInt(muxMatch[1]);
                 progressBar.querySelector('.fill').style.width = `${pct}%`;
-                statusEl.textContent = `Writing output... ${pct}%`;
+                log(`[Merge] Writing output... ${pct}%`);
             } else {
-                statusEl.textContent = progress.replace(/^status:/, '');
+                log(`[Merge] ${progress.replace(/^status:/, '')}`);
             }
         } else {
             mergeBtn.disabled = false;
             mergeStop.classList.add('hidden');
             if (task.status === 'done') {
                 progressBar.querySelector('.fill').style.width = '100%';
-                setStatus('Done!', 'ok');
                 log(`[Merge] Completed in ${task.result.elapsed} \u2192 ${task.result.output}`);
                 alert(`Output file created!\n${task.result.output}`);
             } else {
                 progressBar.querySelector('.fill').style.width = '0%';
-                setStatus('Merge error', 'err');
-                statusEl.textContent = `Error: ${task.error}`;
                 log(`[Merge] Error: ${task.error}`);
             }
         }
@@ -761,10 +731,13 @@ async function runMerge() {
 
 
 function pollTask(taskKey, taskId, callback) {
+    let lastProgress = '';
     const interval = setInterval(async () => {
         try {
             const res = await fetch(`/api/task/${taskId}`);
             const task = await res.json();
+            if (task.status === 'running' && task.progress === lastProgress) return;
+            lastProgress = task.progress || '';
             callback(task);
             if (task.status !== 'running') {
                 clearInterval(interval);
@@ -967,15 +940,12 @@ function clearAll() {
 
     document.getElementById('v1-tracks').innerHTML = '<span class="text-dim text-sm">Load Video 1...</span>';
     document.getElementById('v2-tracks').innerHTML = '<span class="text-dim text-sm">Load Video 2...</span>';
-    document.getElementById('v1-track-status').textContent = '';
-    document.getElementById('v2-track-status').textContent = '';
 
     for (const n of [1, 2]) {
         const combo = document.getElementById(`v${n}-sync-track`);
         combo.innerHTML = '<option value="0">0: (default)</option>';
     }
 
-    document.getElementById('align-status').textContent = '';
     document.getElementById('align-progress').classList.remove('progress-indeterminate');
     document.getElementById('align-progress').querySelector('.fill').style.width = '0%';
 
@@ -990,10 +960,6 @@ function clearAll() {
     }
     document.getElementById('results-detail').value = '';
 
-    document.getElementById('container-info').textContent = 'Load Video 1 to see output format';
-    document.getElementById('container-info').className = 'status-label text-sm';
-
-    document.getElementById('merge-status').textContent = '';
     document.getElementById('merge-progress').querySelector('.fill').style.width = '0%';
 
     document.getElementById('log-box').value = '';
