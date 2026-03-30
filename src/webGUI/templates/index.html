@@ -6,17 +6,17 @@
 <title>{{ app_title }}</title>
 <style>
 :root {
-    --bg:       #1a1a2e;
-    --sf2:      #1f2b47;
-    --tx:       #e0e0e8;
-    --ac:       #ff6b4a;
-    --field-bg: #16213e;
-    --green:    #4aff8b;
-    --warn:     #ffaa44;
-    --dim:      #8888a0;
-    --err:      #ff6b6b;
-    --blue:     #6baaff;
-    --border:   #333355;
+    --bg:       #1e1e2e;
+    --sf2:      #2a2a3c;
+    --tx:       #cdd6f4;
+    --ac:       #89b4fa;
+    --field-bg: #181825;
+    --green:    #a6e3a1;
+    --warn:     #f9e2af;
+    --dim:      #7f849c;
+    --err:      #f38ba8;
+    --blue:     #89dceb;
+    --border:   #45475a;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -26,9 +26,73 @@ body {
     font-size: 14px;
 }
 
+.app-layout {
+    display: flex;
+    max-width: 1320px;
+    margin: 16px auto;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.sidebar {
+    width: 220px;
+    min-width: 220px;
+    border-right: 1px solid var(--border);
+    background: #181825;
+    padding: 10px 0;
+    height: 100vh;
+    position: sticky;
+    top: 0;
+    overflow-y: auto;
+}
+.sidebar-title {
+    color: var(--ac);
+    font-weight: 700;
+    font-size: 12px;
+    padding: 4px 12px 8px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 4px;
+}
+.session-item {
+    padding: 6px 12px;
+    font-size: 11px;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    transition: background 0.15s;
+}
+.session-item:hover { background: var(--sf2); }
+.session-item.active { border-left-color: var(--ac); background: var(--sf2); }
+.session-item .session-label {
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.session-item .session-status {
+    font-size: 10px;
+    margin-top: 2px;
+    color: var(--dim);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.status-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    display: inline-block; flex-shrink: 0;
+}
+.status-dot.running { background: var(--blue); animation: pulse 1.5s infinite; }
+.status-dot.idle { background: var(--dim); }
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
 .app {
+    flex: 1;
+    min-width: 0;
     max-width: 1100px;
-    margin: 0 auto;
     padding: 12px 16px;
 }
 .file-inputs {
@@ -88,16 +152,16 @@ button {
     transition: background 0.15s;
     white-space: nowrap;
 }
-button:hover { background: #2a3f60; }
+button:hover { background: #353548; }
 button:disabled { opacity: 0.5; cursor: default; }
-.btn-accent { background: var(--ac); color: #fff; font-weight: 700; border-color: var(--ac); }
-.btn-accent:hover { background: #ff8b6a; }
-.btn-green { background: #1a4a2e; color: var(--green); font-weight: 700; border-color: #1a4a2e; }
-.btn-green:hover { background: #1f5a35; }
-.btn-red { background: #4a1a1a; color: var(--err); font-weight: 700; border-color: #4a1a1a; }
-.btn-red:hover { background: #5a2020; }
-.btn-blue { background: #1a2a4a; color: var(--blue); font-weight: 700; border-color: #1a2a4a; }
-.btn-blue:hover { background: #1f3560; }
+.btn-accent { background: var(--ac); color: #1e1e2e; font-weight: 700; border-color: var(--ac); }
+.btn-accent:hover { background: #b4d0fb; }
+.btn-green { background: #1e3a2e; color: var(--green); font-weight: 700; border-color: #2a4a3a; }
+.btn-green:hover { background: #264a38; }
+.btn-red { background: #3a1e2a; color: var(--err); font-weight: 700; border-color: #4a2a3a; }
+.btn-red:hover { background: #4a2838; }
+.btn-blue { background: #1e2a3a; color: var(--blue); font-weight: 700; border-color: #2a3a4a; }
+.btn-blue:hover { background: #283a50; }
 .btn-sm { padding: 3px 8px; font-size: 11px; }
 
 input[type="text"], input[type="number"], select {
@@ -142,7 +206,7 @@ input[type="checkbox"] { accent-color: var(--ac); }
 }
 
 .log-box, .results-box {
-    background: #0a0a14;
+    background: #11111b;
     color: var(--dim);
     font-family: 'Consolas', monospace;
     font-size: 11px;
@@ -178,15 +242,6 @@ input[type="checkbox"] { accent-color: var(--ac); }
     100% { transform: translateX(430%); }
 }
 
-.status-label {
-    font-size: 12px;
-    color: var(--dim);
-    padding: 3px 0;
-    word-break: break-all;
-}
-.status-label.ok { color: var(--green); }
-.status-label.warn { color: var(--warn); }
-.status-label.err { color: var(--err); }
 .row { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
 .row label { font-size: 12px; min-width: 90px; }
 .mt-4 { margin-top: 4px; }
@@ -239,7 +294,13 @@ input[type="checkbox"] { accent-color: var(--ac); }
 </head>
 <body>
 
+<div class="app-layout">
+<div class="sidebar">
+    <div class="sidebar-title">Sessions</div>
+    <div id="session-list"></div>
+</div>
 <div class="app">
+    <div style="font-size:15px;font-weight:700;color:var(--ac);margin-bottom:8px">{{ app_title }}</div>
     <div class="file-inputs">
         <div class="file-row">
             <span class="label" style="color:var(--dim)">ffmpeg</span>
@@ -255,29 +316,31 @@ input[type="checkbox"] { accent-color: var(--ac); }
         <div class="file-row">
             <span class="label">Video 1</span>
             <input type="text" id="v1-path-input" placeholder="Primary video (keeps video + all audio)...">
-            <button onclick="browseServer(1)">Browse Server...</button>
-            <button onclick="uploadVideo(1)">Upload...</button>
+            <button onclick="browseServer(1)">Browse...</button>
             <button class="btn-accent btn-sm" onclick="loadVideo(1)">Load</button>
-            <input type="file" id="v1-upload" accept="video/*" class="hidden">
         </div>
         <div class="file-info" id="v1-file-info"></div>
         <div class="file-row">
             <span class="label">Video 2</span>
             <input type="text" id="v2-path-input" placeholder="Audio source video...">
-            <button onclick="browseServer(2)">Browse Server...</button>
-            <button onclick="uploadVideo(2)">Upload...</button>
+            <button onclick="browseServer(2)">Browse...</button>
             <button class="btn-accent btn-sm" onclick="loadVideo(2)">Load</button>
-            <input type="file" id="v2-upload" accept="video/*" class="hidden">
         </div>
         <div class="file-info" id="v2-file-info"></div>
+        <div class="file-row">
+            <span class="label">Output</span>
+            <input type="text" id="out-path-input" placeholder="Output path (auto-generated from Video 1)...">
+            <button onclick="browseOutputDir()">Browse...</button>
+        </div>
     </div>
 
     <div class="grid">
 
         <div class="panel">
-            <div class="panel-title">Video 1 Audio (all kept)</div>
+            <div class="panel-title">Video 1 Streams (select for output)</div>
             <div class="panel-body">
                 <div id="v1-tracks"><span class="text-dim text-sm">Load Video 1...</span></div>
+                <button class="btn-blue btn-sm mt-4" onclick="openMetadataEditor('v1')">Edit Titles...</button>
             </div>
         </div>
 
@@ -285,11 +348,7 @@ input[type="checkbox"] { accent-color: var(--ac); }
             <div class="panel-title">Video 2 Audio (select tracks to merge)</div>
             <div class="panel-body">
                 <div id="v2-tracks"><span class="text-dim text-sm">Load Video 2...</span></div>
-                <div class="row mt-4">
-                    <label class="text-sm" style="min-width:auto">Manual indices:</label>
-                    <input type="text" id="v2-manual" value="0" style="width:80px" placeholder="0,1,2">
-                    <span class="text-dim text-sm">(comma-sep)</span>
-                </div>
+                <button class="btn-blue btn-sm mt-4" onclick="openMetadataEditor('v2')">Edit Titles...</button>
             </div>
         </div>
 
@@ -305,9 +364,14 @@ input[type="checkbox"] { accent-color: var(--ac); }
                     <select id="v2-sync-track" style="flex:1"><option value="0">0: (default)</option></select>
                 </div>
                 <div class="text-dim text-sm mt-4">Pick tracks that share common audio</div>
+                <div class="row mt-4" style="gap:12px">
+                    <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
+                        <input type="checkbox" id="vocal-filter-cb" checked> Filter vocals (cross-language)
+                    </label>
+                </div>
                 <div class="row mt-4">
                     <button class="btn-accent" id="align-btn" onclick="runAlign()" style="flex:1">Auto-Align</button>
-                    <button class="btn-red hidden" id="align-stop" onclick="cancelTask('align')">Stop</button>
+                    <button class="btn-red hidden" id="align-stop" onclick="cancelRunningTask()">Stop</button>
                 </div>
                 <div class="progress-bar" id="align-progress"><div class="fill"></div></div>
             </div>
@@ -324,8 +388,8 @@ input[type="checkbox"] { accent-color: var(--ac); }
                     <label class="text-sm">Offset (s):</label>
                     <input type="text" id="offset-input" value="0.000" style="width:130px">
                 </div>
+                <div id="segment-overrides"></div>
                 <button class="btn-sm mt-4" onclick="updateParams()">Update Parameters</button>
-                <button class="btn-blue btn-sm mt-4" onclick="openMetadataEditor()">Edit Track Titles / Languages...</button>
             </div>
         </div>
 
@@ -347,10 +411,9 @@ input[type="checkbox"] { accent-color: var(--ac); }
             <div class="panel-body">
                 <div class="row">
                     <button class="btn-green" id="merge-btn" onclick="runMerge()" style="flex:1">Run Merge</button>
-                    <button class="btn-red hidden" id="merge-stop" onclick="cancelTask('merge')">Stop</button>
+                    <button class="btn-red hidden" id="merge-stop" onclick="cancelRunningTask()">Stop</button>
                 </div>
                 <div class="progress-bar" id="merge-progress"><div class="fill"></div></div>
-                <button class="btn-sm mt-4" onclick="clearAll()" style="width:100%">Clear All</button>
             </div>
         </div>
 
@@ -361,41 +424,39 @@ input[type="checkbox"] { accent-color: var(--ac); }
             </div>
         </div>
 
-        <div class="status-label full" id="app-status">{{ app_title }}</div>
     </div>
+</div>
 </div>
 
 <script>
+const APP_TITLE = {{ app_title | tojson }};
+const ALL_LANGUAGES = {{ all_languages | tojson }};
+const LANG_NAMES = {{ lang_names | tojson }};
+
 const state = {
-    v1: { path: '', tracks: [], duration: 0 },
+    v1: { path: '', tracks: [], streams: [], duration: 0 },
     v2: { path: '', tracks: [], duration: 0 },
+    v1StreamSelected: {},
     v2Selected: {},
     trackOverrides: {},
     mergeParams: null,
-    tasks: {},
+    segments: null,
     containerChange: false,
     containerExt: '',
 };
 
-const ALL_LANGUAGES = {{ all_languages | tojson }};
-const LANG_NAMES = {{ lang_names | tojson }};
-
-
-function clearLog() {
-    document.getElementById('log-box').value = '';
-}
+let _sessionId = null;
+let _viewId = 0;
+let _runningTaskId = null;
+let _runningTaskType = null;
+let _pollInterval = null;
+let _sessionCache = {};
 
 function log(msg) {
     const box = document.getElementById('log-box');
     const ts = new Date().toLocaleTimeString();
     box.value += `[${ts}] ${msg}\n`;
     box.scrollTop = box.scrollHeight;
-}
-
-function setStatus(msg, cls) {
-    const el = document.getElementById('app-status');
-    el.textContent = msg;
-    el.className = 'status-label full' + (cls ? ' ' + cls : '');
 }
 
 function formatTimestamp(sec) {
@@ -411,15 +472,131 @@ function basename(p) {
     return p.replace(/\\/g, '/').split('/').pop();
 }
 
+function escapeHtml(str) {
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
 async function apiPost(url, data) {
     const res = await fetch(url, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(data),
     });
+    if (!res.ok) {
+        try { return await res.json(); } catch { return { error: `HTTP ${res.status}` }; }
+    }
     return res.json();
 }
 
+function lockButtons(runningType) {
+    document.getElementById('align-btn').disabled = true;
+    document.getElementById('merge-btn').disabled = true;
+    if (runningType === 'align') {
+        document.getElementById('align-stop').classList.remove('hidden');
+    } else if (runningType === 'merge') {
+        document.getElementById('merge-stop').classList.remove('hidden');
+    }
+}
+
+function unlockButtons() {
+    document.getElementById('align-btn').disabled = false;
+    document.getElementById('merge-btn').disabled = false;
+    document.getElementById('align-stop').classList.add('hidden');
+    document.getElementById('merge-stop').classList.add('hidden');
+}
+
+function startPoll(taskType, taskId, onUpdate, onDone) {
+    stopPoll();
+    _runningTaskId = taskId;
+    _runningTaskType = taskType;
+    let lastProgress = '';
+    let delay = 500;
+    function schedulePoll() {
+        _pollInterval = setTimeout(async () => {
+            try {
+                const res = await fetch(`/api/session/${_sessionId}/task/${taskId}`);
+                if (!res.ok) {
+                    stopPoll();
+                    onDone({ status: 'error', error: 'Task not found' });
+                    return;
+                }
+                const task = await res.json();
+                if (task.status === 'running') {
+                    if (task.progress !== lastProgress) {
+                        lastProgress = task.progress || '';
+                        onUpdate(task);
+                        delay = 500;
+                    } else {
+                        delay = Math.min(delay * 1.5, 3000);
+                    }
+                    schedulePoll();
+                } else {
+                    stopPoll();
+                    onDone(task);
+                }
+            } catch (e) {
+                stopPoll();
+                onDone({ status: 'error', error: 'Connection lost' });
+            }
+        }, delay);
+    }
+    schedulePoll();
+}
+
+function stopPoll() {
+    if (_pollInterval) {
+        clearTimeout(_pollInterval);
+        _pollInterval = null;
+    }
+    _runningTaskId = null;
+    _runningTaskType = null;
+}
+
+async function cancelRunningTask() {
+    if (!_sessionId || !_runningTaskId) return;
+    await fetch(`/api/session/${_sessionId}/task/${_runningTaskId}/cancel`, { method: 'POST' });
+    log(`[${_runningTaskType}] Cancel requested`);
+}
+
+function resetUI() {
+    document.getElementById('v1-path-input').value = '';
+    document.getElementById('v2-path-input').value = '';
+    document.getElementById('out-path-input').value = '';
+    document.getElementById('out-path-input').dataset.lastAutoPath = '';
+    document.getElementById('v1-file-info').textContent = '';
+    document.getElementById('v2-file-info').textContent = '';
+    document.getElementById('v1-tracks').innerHTML = '<span class="text-dim text-sm">Load Video 1...</span>';
+    document.getElementById('v2-tracks').innerHTML = '<span class="text-dim text-sm">Load Video 2...</span>';
+    for (const n of [1, 2]) {
+        document.getElementById(`v${n}-sync-track`).innerHTML = '<option value="0">0: (default)</option>';
+    }
+    document.getElementById('align-progress').classList.remove('progress-indeterminate');
+    document.getElementById('align-progress').querySelector('.fill').style.width = '0%';
+    document.getElementById('atempo-input').value = '1.000000';
+    document.getElementById('offset-input').value = '0.000';
+    for (const k of ['r-mode','r-atempo','r-offset','r-inliers','r-fit','r-precision']) {
+        const el = document.getElementById(k);
+        el.textContent = '-';
+        el.style.color = '';
+    }
+    document.getElementById('results-detail').value = '';
+    document.getElementById('segment-overrides').innerHTML = '';
+    document.getElementById('merge-progress').querySelector('.fill').style.width = '0%';
+    document.getElementById('log-box').value = '';
+    unlockButtons();
+}
+
+function resetState() {
+    state.v1 = { path: '', tracks: [], streams: [], duration: 0 };
+    state.v2 = { path: '', tracks: [], duration: 0 };
+    state.v1StreamSelected = {};
+    state.v2Selected = {};
+    state.trackOverrides = {};
+    state.mergeParams = null;
+    state.segments = null;
+    state.containerChange = false;
+    state.containerExt = '';
+}
 
 async function loadVideo(n) {
     const pathInput = document.getElementById(`v${n}-path-input`);
@@ -427,7 +604,6 @@ async function loadVideo(n) {
     if (!filepath) return;
 
     const fileInfo = document.getElementById(`v${n}-file-info`);
-
     fileInfo.textContent = 'Probing...';
     log(`[V${n}] Probing ${basename(filepath)}...`);
 
@@ -441,11 +617,17 @@ async function loadVideo(n) {
     state[`v${n}`] = {
         path: filepath,
         tracks: result.tracks,
+        streams: result.streams || [],
         duration: result.duration,
     };
 
-    fileInfo.textContent = `${basename(filepath)} — ${result.duration_fmt}`;
-    log(`[V${n}] ${basename(filepath)}: ${result.tracks.length} audio track(s), ${result.duration_fmt}`);
+    fileInfo.textContent = `${basename(filepath)} \u2014 ${result.duration_fmt}`;
+    const streamCounts = (result.streams || []).reduce((acc, s) => {
+        acc[s.codec_type] = (acc[s.codec_type] || 0) + 1;
+        return acc;
+    }, {});
+    const countStr = Object.entries(streamCounts).map(([k,v]) => `${v} ${k}`).join(', ');
+    log(`[V${n}] ${basename(filepath)}: ${countStr}, ${result.duration_fmt}`);
 
     if (n === 1) {
         state.containerChange = result.container_change;
@@ -453,13 +635,60 @@ async function loadVideo(n) {
         if (result.container_change) {
             log(`[V1] Container '${result.container_ext}' does not support multi-audio, output will use .mkv`);
         }
+        fillV1Streams(result.streams || []);
+        updateOutputPathIfDefault();
     }
 
-    fillTracks(n, result.tracks, result.method, result.error);
+    fillTracks(n, result.tracks);
     updateSyncCombos();
 }
 
-function fillTracks(n, tracks, method, error) {
+function streamLabel(s) {
+    const si = s.stream_index;
+    const type = s.codec_type;
+    const codec = s.codec || '?';
+    const lang = s.language && s.language !== 'und' ? `[${s.language}]` : '';
+    const title = s.title ? ` "${s.title}"` : '';
+    if (type === 'video') {
+        return `#${si} video: ${codec} ${s.width || '?'}x${s.height || '?'}`;
+    } else if (type === 'audio') {
+        return `#${si} audio: ${lang} ${codec}, ${s.channels || '?'}ch, ${s.sample_rate || '?'}Hz${title}`;
+    } else if (type === 'subtitle') {
+        return `#${si} subtitle: ${lang} ${codec}${title}`;
+    } else {
+        return `#${si} ${type}: ${codec}${title}`;
+    }
+}
+
+function fillV1Streams(streams) {
+    const container = document.getElementById('v1-tracks');
+    container.innerHTML = '';
+    state.v1StreamSelected = {};
+
+    if (!streams || streams.length === 0) {
+        container.innerHTML = '<span class="text-dim text-sm">No streams found</span>';
+        return;
+    }
+
+    streams.forEach(s => {
+        state.v1StreamSelected[s.stream_index] = true;
+        const label = document.createElement('label');
+        label.className = 'track-item';
+        label.style.cursor = 'pointer';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = true;
+        cb.dataset.si = s.stream_index;
+        cb.addEventListener('change', () => { state.v1StreamSelected[s.stream_index] = cb.checked; });
+        label.appendChild(cb);
+        const text = ` ${streamLabel(s)}`;
+        label.appendChild(document.createTextNode(text));
+        container.appendChild(label);
+    });
+}
+
+function fillTracks(n, tracks) {
+    if (n === 1) return;
     const container = document.getElementById(`v${n}-tracks`);
     container.innerHTML = '';
 
@@ -468,42 +697,26 @@ function fillTracks(n, tracks, method, error) {
         return;
     }
 
-    if (n === 1) {
-        tracks.forEach(t => {
-            const key = `v1_${t.index}`;
-            const lang = (state.trackOverrides[key] || {}).language
-                || '';
-            const langStr = lang && LANG_NAMES[lang] ? ` \u2192 ${LANG_NAMES[lang]}` : '';
-            const titleOvr = (state.trackOverrides[key] || {}).title || '';
-            const titleStr = titleOvr ? ` "${titleOvr}"` : '';
-            const div = document.createElement('div');
-            div.className = 'track-item kept';
-            div.textContent = `${t.label}${langStr}${titleStr}`;
-            container.appendChild(div);
-        });
-    } else {
-        state.v2Selected = {};
-        tracks.forEach(t => {
-            const key = `v2_${t.index}`;
-            state.v2Selected[t.index] = true;
-            const lang = (state.trackOverrides[key] || {}).language
-                || '';
-            const langStr = lang && LANG_NAMES[lang] ? ` \u2192 ${LANG_NAMES[lang]}` : '';
-            const titleOvr = (state.trackOverrides[key] || {}).title || '';
-            const titleStr = titleOvr ? ` "${titleOvr}"` : '';
-            const label = document.createElement('label');
-            label.className = 'track-item';
-            label.style.cursor = 'pointer';
-            const cb = document.createElement('input');
-            cb.type = 'checkbox';
-            cb.checked = true;
-            cb.dataset.idx = t.index;
-            cb.addEventListener('change', () => { state.v2Selected[t.index] = cb.checked; });
-            label.appendChild(cb);
-            label.appendChild(document.createTextNode(` ${t.label}${langStr}${titleStr}`));
-            container.appendChild(label);
-        });
-    }
+    state.v2Selected = {};
+    tracks.forEach(t => {
+        const key = `v2_${t.index}`;
+        state.v2Selected[t.index] = true;
+        const lang = (state.trackOverrides[key] || {}).language || '';
+        const langStr = lang && LANG_NAMES[lang] ? ` \u2192 ${LANG_NAMES[lang]}` : '';
+        const titleOvr = (state.trackOverrides[key] || {}).title || '';
+        const titleStr = titleOvr ? ` "${titleOvr}"` : '';
+        const label = document.createElement('label');
+        label.className = 'track-item';
+        label.style.cursor = 'pointer';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = true;
+        cb.dataset.idx = t.index;
+        cb.addEventListener('change', () => { state.v2Selected[t.index] = cb.checked; });
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(` ${t.label}${langStr}${titleStr}`));
+        container.appendChild(label);
+    });
 }
 
 function updateSyncCombos() {
@@ -527,63 +740,85 @@ function updateSyncCombos() {
     }
 }
 
+function getV1StreamIndices() {
+    return Object.entries(state.v1StreamSelected)
+        .filter(([_, v]) => v).map(([k]) => parseInt(k)).sort((a, b) => a - b);
+}
+
+function getV1SelectedAudioCount() {
+    const selectedIndices = new Set(getV1StreamIndices());
+    return (state.v1.streams || []).filter(s =>
+        s.codec_type === 'audio' && selectedIndices.has(s.stream_index)
+    ).length;
+}
+
 function getV2Indices() {
     const fromCheckboxes = Object.entries(state.v2Selected)
         .filter(([_, v]) => v).map(([k]) => parseInt(k));
-    if (fromCheckboxes.length > 0) return fromCheckboxes.sort();
-    const manual = document.getElementById('v2-manual').value;
-    try { return manual.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n)); }
-    catch { return [0]; }
+    return fromCheckboxes.sort();
 }
 
-
-
+async function ensureSession() {
+    if (_sessionId) return _sessionId;
+    const res = await apiPost('/api/sessions', {});
+    _sessionId = res.session_id;
+    sessionStorage.setItem('audiosync_session', _sessionId);
+    refreshSessionList();
+    return _sessionId;
+}
 
 async function runAlign() {
+    if (_runningTaskId) { alert('A task is already running. Stop it first.'); return; }
     if (!state.v1.path || !state.v2.path) { alert('Load both videos first.'); return; }
 
-    const alignBtn = document.getElementById('align-btn');
-    const alignStop = document.getElementById('align-stop');
-    const progressBar = document.getElementById('align-progress');
+    await ensureSession();
+    const myView = ++_viewId;
 
-    alignBtn.disabled = true;
-    alignStop.classList.remove('hidden');
-    progressBar.classList.add('progress-indeterminate');
-    clearLog();
+    lockButtons('align');
+    document.getElementById('align-progress').classList.add('progress-indeterminate');
+    document.getElementById('log-box').value = '';
     log('[Align] Starting...');
 
     const t1 = parseInt(document.getElementById('v1-sync-track').value) || 0;
     const t2 = parseInt(document.getElementById('v2-sync-track').value) || 0;
 
-    const result = await apiPost('/api/align', {
+    const vocalFilter = document.getElementById('vocal-filter-cb').checked;
+
+    const result = await apiPost(`/api/session/${_sessionId}/align`, {
         v1_path: state.v1.path, v2_path: state.v2.path,
         v1_track: t1, v2_track: t2,
+        vocal_filter: vocalFilter,
     });
 
+    if (_viewId !== myView) return;
+
     if (result.error) {
-        alignBtn.disabled = false;
-        alignStop.classList.add('hidden');
-        progressBar.classList.remove('progress-indeterminate');
+        unlockButtons();
+        document.getElementById('align-progress').classList.remove('progress-indeterminate');
         log(`[Align] Error: ${result.error}`);
         return;
     }
 
-    state.tasks.align = result.task_id;
-    pollTask('align', result.task_id, (task) => {
-        if (task.status === 'running') {
+    refreshSessionList();
+
+    startPoll('align', result.task_id,
+        (task) => {
+            if (_viewId !== myView) return;
             log(`[Align] ${task.progress || 'Processing...'}`);
-        } else {
-            alignBtn.disabled = false;
-            alignStop.classList.add('hidden');
-            progressBar.classList.remove('progress-indeterminate');
+        },
+        (task) => {
+            if (_viewId !== myView) return;
+            unlockButtons();
+            document.getElementById('align-progress').classList.remove('progress-indeterminate');
             if (task.status === 'done') {
                 showAlignResults(task.result);
                 log(`[Align] Done: ${task.result.inlier_count} inliers, atempo=${task.result.speed_ratio.toFixed(6)}, offset=${task.result.offset.toFixed(3)}s`);
             } else {
-                log(`[Align] Error: ${task.error}`);
+                log(`[Align] ${task.status}: ${task.error || ''}`);
             }
+            refreshSessionList();
         }
-    });
+    );
 }
 
 function showAlignResults(r) {
@@ -607,6 +842,9 @@ function showAlignResults(r) {
     precEl.textContent = `avg=${rmean.toFixed(3)}s  max=${rmax.toFixed(3)}s  end=${rend.toFixed(3)}s`;
     precEl.style.color = rmax < 0.5 ? 'var(--green)' : rmax < 1.5 ? 'var(--warn)' : 'var(--err)';
 
+    state.segments = r.segments || null;
+    renderSegmentOverrides();
+
     const detail = document.getElementById('results-detail');
     const v1c = r.v1_coverage || [0,0], v2c = r.v2_coverage || [0,0];
     const v1i = r.v1_interval || 0, v2i = r.v2_interval || 0;
@@ -614,6 +852,18 @@ function showAlignResults(r) {
     txt += `V1: ${formatTimestamp(v1c[0])} - ${formatTimestamp(v1c[1])}\n`;
     txt += `V2: ${formatTimestamp(v2c[0])} - ${formatTimestamp(v2c[1])}\n`;
     txt += `Residual: avg=${rmean.toFixed(3)}s max=${rmax.toFixed(3)}s\n`;
+
+    const segs = r.segments || [];
+    if (segs.length > 1) {
+        txt += '\u2500'.repeat(38) + '\n';
+        txt += `SEGMENTS: ${segs.length} (content breaks detected)\n`;
+        for (let i = 0; i < segs.length; i++) {
+            const s = segs[i];
+            const sEnd = s.v1_end >= 1e9 ? 'end' : formatTimestamp(s.v1_end);
+            txt += `  #${i+1}: ${formatTimestamp(s.v1_start)} - ${sEnd}  offset=${s.offset >= 0 ? '+' : ''}${s.offset.toFixed(3)}s  (${s.n_inliers} matches)\n`;
+        }
+    }
+
     txt += '\u2500'.repeat(38) + '\n';
     const pairs = r.inlier_pairs || [];
     const step = Math.max(1, Math.floor(pairs.length / 10));
@@ -625,44 +875,77 @@ function showAlignResults(r) {
     detail.value = txt;
 
     prepareMerge(at, off, getV2Indices());
-    setStatus('Alignment complete', 'ok');
+    const segMsg = segs.length > 1 ? ` (${segs.length} segments)` : '';
+    log(`[Align] Alignment complete${segMsg}`);
 }
-
 
 function prepareMerge(atempo, offset, v2Indices) {
     const v1 = state.v1.path, v2 = state.v2.path;
     if (!v1 || !v2) return;
-    const dotIdx = v1.lastIndexOf('.');
-    const base = dotIdx > 0 ? v1.substring(0, dotIdx) : v1;
-    const ext = dotIdx > 0 ? v1.substring(dotIdx) : '';
-    const outExt = state.containerChange ? '.mkv' : ext;
-    const outPath = `${base}_merged${outExt}`;
-    const nV1Audio = state.v1.tracks.length || 1;
+    const outInput = document.getElementById('out-path-input').value.trim();
+    const outPath = outInput || getDefaultOutputPath();
+    const v1StreamIndices = getV1StreamIndices();
+    const nV1Audio = getV1SelectedAudioCount();
     const metadata = [];
-    for (let i = 0; i < nV1Audio; i++) {
-        const key = `v1_${i}`;
+    for (const s of state.v1.streams || []) {
+        if (s.codec_type !== 'audio') continue;
+        if (!state.v1StreamSelected[s.stream_index]) continue;
+        const key = `v1_s${s.stream_index}`;
         const ovr = state.trackOverrides[key] || {};
-        metadata.push({ language: ovr.language || (state.v1.tracks[i] || {}).language || 'und', title: ovr.title || '' });
+        metadata.push({ language: ovr.language || s.language || 'und', title: ovr.title || s.title || '' });
     }
     for (const tidx of v2Indices) {
         const key = `v2_${tidx}`;
         const ovr = state.trackOverrides[key] || {};
         metadata.push({ language: ovr.language || '', title: ovr.title || '' });
     }
-    state.mergeParams = { v1_path: v1, v2_path: v2, out_path: outPath, atempo, offset, v1_n_audio: nV1Audio, v2_indices: v2Indices, v1_duration: state.v1.duration, metadata };
-    setStatus(`Ready: atempo=${atempo.toFixed(6)}, offset=${offset.toFixed(3)}s \u2192 ${basename(outPath)}`);
+    const params = { v1_path: v1, v2_path: v2, out_path: outPath, atempo, offset, v1_n_audio: nV1Audio, v1_stream_indices: v1StreamIndices, v2_indices: v2Indices, v1_duration: state.v1.duration, metadata };
+    if (state.segments && state.segments.length > 1) {
+        params.segments = state.segments;
+    }
+    state.mergeParams = params;
+    const segMsg = (state.segments && state.segments.length > 1) ? ` (${state.segments.length} segments)` : '';
+    log(`[Merge] Ready: atempo=${atempo.toFixed(6)}, offset=${offset.toFixed(3)}s${segMsg} \u2192 ${basename(outPath)}`);
+}
+
+function renderSegmentOverrides() {
+    const container = document.getElementById('segment-overrides');
+    const segs = state.segments;
+    if (!segs || segs.length <= 1) {
+        container.innerHTML = '';
+        return;
+    }
+    let html = '<div class="text-dim text-sm mt-4" style="margin-bottom:4px">Segment offsets:</div>';
+    for (let i = 0; i < segs.length; i++) {
+        const s = segs[i];
+        const sEnd = s.v1_end >= 1e9 ? 'end' : formatTimestamp(s.v1_end);
+        html += `<div class="row" style="gap:4px">`;
+        html += `<span class="text-sm text-dim" style="min-width:90px">#${i+1} (${formatTimestamp(s.v1_start)}-${sEnd}):</span>`;
+        html += `<input type="text" class="seg-offset-input" data-seg="${i}" value="${s.offset.toFixed(3)}" style="width:100px">`;
+        html += `<span class="text-sm text-dim">s</span></div>`;
+    }
+    container.innerHTML = html;
 }
 
 function updateParams() {
     const at = parseFloat(document.getElementById('atempo-input').value);
     const off = parseFloat(document.getElementById('offset-input').value);
     if (isNaN(at) || isNaN(off)) { alert('Enter valid numbers.'); return; }
+    const segInputs = document.querySelectorAll('.seg-offset-input');
+    if (segInputs.length > 0 && state.segments && state.segments.length > 1) {
+        for (const inp of segInputs) {
+            const idx = parseInt(inp.dataset.seg);
+            const val = parseFloat(inp.value);
+            if (isNaN(val)) { alert(`Invalid offset for segment #${idx+1}.`); return; }
+            state.segments[idx].offset = val;
+        }
+    }
     prepareMerge(at, off, getV2Indices());
-    setStatus('Merge parameters updated');
+    log('[Merge] Parameters updated');
 }
 
-
 async function runMerge() {
+    if (_runningTaskId) { alert('A task is already running. Stop it first.'); return; }
     if (!state.mergeParams) {
         const at = parseFloat(document.getElementById('atempo-input').value);
         const off = parseFloat(document.getElementById('offset-input').value);
@@ -673,6 +956,13 @@ async function runMerge() {
         prepareMerge(at, off, getV2Indices());
     }
     if (!state.v1.path || !state.v2.path) { alert('Load both videos.'); return; }
+    if (getV2Indices().length === 0) { alert('Select at least one V2 audio track.'); return; }
+
+    const currentOutPath = document.getElementById('out-path-input').value.trim() || getDefaultOutputPath();
+    if (state.mergeParams) {
+        state.mergeParams.out_path = currentOutPath;
+    }
+
     if (state.containerChange && !confirm(`Container '${state.containerExt}' doesn't support multi-audio.\nOutput will use .mkv.\n\nContinue?`)) return;
 
     const existsResult = await apiPost('/api/file-exists', { path: state.mergeParams.out_path });
@@ -682,29 +972,31 @@ async function runMerge() {
         if (!confirm('Merge the audio tracks now?')) return;
     }
 
-    const mergeBtn = document.getElementById('merge-btn');
-    const mergeStop = document.getElementById('merge-stop');
+    await ensureSession();
+    const myView = ++_viewId;
     const progressBar = document.getElementById('merge-progress');
 
-    mergeBtn.disabled = true;
-    mergeStop.classList.remove('hidden');
+    lockButtons('merge');
     progressBar.querySelector('.fill').style.width = '0%';
-    clearLog();
+    document.getElementById('log-box').value = '';
     log('[Merge] Starting...');
 
     const body = { ...state.mergeParams };
+    const result = await apiPost(`/api/session/${_sessionId}/merge`, body);
 
-    const result = await apiPost('/api/merge', body);
+    if (_viewId !== myView) return;
+
     if (result.error) {
-        mergeBtn.disabled = false;
-        mergeStop.classList.add('hidden');
+        unlockButtons();
         log(`[Merge] Error: ${result.error}`);
         return;
     }
 
-    state.tasks.merge = result.task_id;
-    pollTask('merge', result.task_id, (task) => {
-        if (task.status === 'running') {
+    refreshSessionList();
+
+    startPoll('merge', result.task_id,
+        (task) => {
+            if (_viewId !== myView) return;
             const progress = task.progress || '';
             const muxMatch = progress.match(/mux:(\d+)/);
             if (muxMatch) {
@@ -714,47 +1006,22 @@ async function runMerge() {
             } else {
                 log(`[Merge] ${progress.replace(/^status:/, '')}`);
             }
-        } else {
-            mergeBtn.disabled = false;
-            mergeStop.classList.add('hidden');
+        },
+        (task) => {
+            if (_viewId !== myView) return;
+            unlockButtons();
             if (task.status === 'done') {
                 progressBar.querySelector('.fill').style.width = '100%';
                 log(`[Merge] Completed in ${task.result.elapsed} \u2192 ${task.result.output}`);
-                alert(`Output file created!\n${task.result.output}`);
+                alert('Output file created!\n' + task.result.output);
             } else {
                 progressBar.querySelector('.fill').style.width = '0%';
-                log(`[Merge] Error: ${task.error}`);
+                log(`[Merge] ${task.status}: ${task.error || ''}`);
             }
+            refreshSessionList();
         }
-    });
+    );
 }
-
-
-function pollTask(taskKey, taskId, callback) {
-    let lastProgress = '';
-    const interval = setInterval(async () => {
-        try {
-            const res = await fetch(`/api/task/${taskId}`);
-            const task = await res.json();
-            if (task.status === 'running' && task.progress === lastProgress) return;
-            lastProgress = task.progress || '';
-            callback(task);
-            if (task.status !== 'running') {
-                clearInterval(interval);
-                delete state.tasks[taskKey];
-            }
-        } catch (e) { clearInterval(interval); }
-    }, 500);
-}
-
-async function cancelTask(taskKey) {
-    const taskId = state.tasks[taskKey];
-    if (taskId) {
-        await fetch(`/api/task/${taskId}/cancel`, { method: 'POST' });
-        log(`[${taskKey}] Cancelled`);
-    }
-}
-
 
 const VIDEO_EXTS = new Set(['.mp4','.mkv','.avi','.mov','.webm','.ts','.flv','.wmv','.m4v','.mts','.m2ts']);
 
@@ -764,7 +1031,7 @@ async function browseServer(n) {
     overlay.innerHTML = `
         <div class="fb-dialog">
             <div class="fb-header">
-                <h3>Browse Server \u2014 Video ${n}</h3>
+                <h3>Browse \u2014 Video ${n}</h3>
                 <button class="btn-sm" onclick="this.closest('.fb-overlay').remove()">Close</button>
             </div>
             <div class="fb-path">
@@ -787,7 +1054,7 @@ async function browseServer(n) {
         listEl.innerHTML = '<div style="padding:10px;color:var(--dim)">Loading...</div>';
         const result = await apiPost('/api/browse', { path });
         if (result.error) {
-            listEl.innerHTML = `<div style="padding:10px;color:var(--err)">${result.error}</div>`;
+            listEl.innerHTML = `<div style="padding:10px;color:var(--err)">${escapeHtml(result.error)}</div>`;
             return;
         }
         pathInput.value = result.current || '';
@@ -800,10 +1067,10 @@ async function browseServer(n) {
             const isVideo = VIDEO_EXTS.has(ext);
 
             if (entry.is_dir) {
-                div.innerHTML = `<span class="icon">\uD83D\uDCC1</span><span>${entry.name}</span>`;
+                div.innerHTML = `<span class="icon">\uD83D\uDCC1</span><span>${escapeHtml(entry.name)}</span>`;
                 div.addEventListener('click', () => navigateTo(entry.path));
             } else {
-                div.innerHTML = `<span class="icon">${isVideo ? '\uD83C\uDFAC' : '\uD83D\uDCC4'}</span><span>${entry.name}</span>`;
+                div.innerHTML = `<span class="icon">${isVideo ? '\uD83C\uDFAC' : '\uD83D\uDCC4'}</span><span>${escapeHtml(entry.name)}</span>`;
                 if (isVideo) {
                     div.style.cursor = 'pointer';
                     div.addEventListener('click', () => {
@@ -831,81 +1098,217 @@ async function browseServer(n) {
     navigateTo(existingPath);
 }
 
-function uploadVideo(n) {
-    const fileInput = document.getElementById(`v${n}-upload`);
-    fileInput.value = '';
-    fileInput.onchange = async () => {
-        const file = fileInput.files[0];
-        if (!file) return;
+async function browseOutputDir() {
+    const overlay = document.createElement('div');
+    overlay.className = 'fb-overlay';
+    overlay.innerHTML = `
+        <div class="fb-dialog">
+            <div class="fb-header">
+                <h3>Browse \u2014 Output Location</h3>
+                <button class="btn-sm" onclick="this.closest('.fb-overlay').remove()">Close</button>
+            </div>
+            <div class="fb-path">
+                <span class="text-sm">Path:</span>
+                <input type="text" id="fb-path-input" placeholder="Enter path and press Enter...">
+                <button class="btn-sm" id="fb-go-btn">Go</button>
+            </div>
+            <div class="fb-list" id="fb-list"></div>
+            <div class="fb-footer">
+                <span class="text-sm text-dim" id="fb-selected-name" style="flex:1"></span>
+                <button class="btn-accent" id="fb-select-btn">Select</button>
+                <button onclick="this.closest('.fb-overlay').remove()">Cancel</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
-        const fileInfo = document.getElementById(`v${n}-file-info`);
-        fileInfo.textContent = `Uploading ${file.name}...`;
-        log(`[V${n}] Uploading ${file.name} (${(file.size / 1048576).toFixed(1)} MB)...`);
+    const pathInput = overlay.querySelector('#fb-path-input');
+    const listEl = overlay.querySelector('#fb-list');
+    const selectedLabel = overlay.querySelector('#fb-selected-name');
+    let currentDir = '';
 
-        const form = new FormData();
-        form.append('file', file);
-
-        try {
-            const res = await fetch('/api/upload', { method: 'POST', body: form });
-            const result = await res.json();
-            if (result.error) {
-                fileInfo.textContent = 'Upload failed';
-                log(`[V${n}] Upload error: ${result.error}`);
-                alert(`Upload failed: ${result.error}`);
-                return;
-            }
-            document.getElementById(`v${n}-path-input`).value = result.path;
-            fileInfo.textContent = `Uploaded: ${result.filename}`;
-            log(`[V${n}] Uploaded to server: ${result.path}`);
-            loadVideo(n);
-        } catch (e) {
-            fileInfo.textContent = 'Upload failed';
-            log(`[V${n}] Upload error: ${e.message}`);
-            alert(`Upload failed: ${e.message}`);
+    async function navigateTo(path) {
+        listEl.innerHTML = '<div style="padding:10px;color:var(--dim)">Loading...</div>';
+        const result = await apiPost('/api/browse', { path });
+        if (result.error) {
+            listEl.innerHTML = `<div style="padding:10px;color:var(--err)">${escapeHtml(result.error)}</div>`;
+            return;
         }
-    };
-    fileInput.click();
+        currentDir = result.current || '';
+        pathInput.value = currentDir;
+        selectedLabel.textContent = currentDir;
+        listEl.innerHTML = '';
+
+        for (const entry of result.entries) {
+            const div = document.createElement('div');
+            div.className = 'fb-item' + (entry.is_dir ? ' dir' : '');
+            if (entry.is_dir) {
+                div.innerHTML = `<span class="icon">\uD83D\uDCC1</span><span>${escapeHtml(entry.name)}</span>`;
+                div.addEventListener('click', () => navigateTo(entry.path));
+            } else {
+                const ext = entry.name.includes('.') ? entry.name.substring(entry.name.lastIndexOf('.')).toLowerCase() : '';
+                const isVideo = VIDEO_EXTS.has(ext);
+                div.innerHTML = `<span class="icon">${isVideo ? '\uD83C\uDFAC' : '\uD83D\uDCC4'}</span><span>${escapeHtml(entry.name)}</span>`;
+                div.style.cursor = 'pointer';
+                div.addEventListener('click', () => {
+                    document.getElementById('out-path-input').value = entry.path;
+                    overlay.remove();
+                });
+            }
+            listEl.appendChild(div);
+        }
+    }
+
+    pathInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            const val = pathInput.value.trim();
+            if (val && !val.endsWith('/') && !val.endsWith('\\') && val.includes('.')) {
+                document.getElementById('out-path-input').value = val;
+                overlay.remove();
+            } else {
+                navigateTo(val);
+            }
+        }
+    });
+    overlay.querySelector('#fb-go-btn').addEventListener('click', () => {
+        navigateTo(pathInput.value.trim());
+    });
+    overlay.querySelector('#fb-select-btn').addEventListener('click', () => {
+        const outInput = document.getElementById('out-path-input');
+        const current = outInput.value.trim();
+        if (currentDir) {
+            const fname = (current ? basename(current) : null) || basename(getDefaultOutputPath());
+            if (fname) {
+                const sep = currentDir.endsWith('/') || currentDir.endsWith('\\') ? '' : '/';
+                outInput.value = currentDir + sep + fname;
+            }
+        }
+        overlay.remove();
+    });
+
+    const existingPath = document.getElementById('out-path-input').value.trim() || state.v1.path || '';
+    navigateTo(existingPath);
 }
 
+function getDefaultOutputPath() {
+    const v1 = state.v1.path;
+    if (!v1) return '';
+    const dotIdx = v1.lastIndexOf('.');
+    const base = dotIdx > 0 ? v1.substring(0, dotIdx) : v1;
+    const ext = dotIdx > 0 ? v1.substring(dotIdx) : '';
+    const outExt = state.containerChange ? '.mkv' : ext;
+    return `${base}_merged${outExt}`;
+}
 
-function openMetadataEditor() {
-    if (!state.v1.tracks.length && !state.v2.tracks.length) { alert('Load at least one video first.'); return; }
-    const v2Indices = getV2Indices();
+function updateOutputPathIfDefault() {
+    const outInput = document.getElementById('out-path-input');
+    const current = outInput.value.trim();
+    if (!current || current === outInput.dataset.lastAutoPath) {
+        const newPath = getDefaultOutputPath();
+        outInput.value = newPath;
+        outInput.dataset.lastAutoPath = newPath;
+    }
+}
+
+function buildLangOptions(selectedCode) {
+    return ALL_LANGUAGES.map(([code, name]) =>
+        `<option value="${code}"${code === selectedCode ? ' selected' : ''}>${code} \u2014 ${name}</option>`
+    ).join('');
+}
+
+function openMetadataEditor(which) {
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center;';
-    const langOptions = ALL_LANGUAGES.map(([code, name]) => `<option value="${code}">${code} \u2014 ${name}</option>`).join('');
-    let html = `<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:20px;min-width:600px;max-width:700px;max-height:80vh;overflow-y:auto;">`;
-    html += `<h3 style="color:var(--ac);margin-bottom:12px;">Edit Track Metadata</h3>`;
-    html += `<p style="color:var(--dim);font-size:12px;margin-bottom:12px;">Edit language and title for each output track.</p>`;
-    if (state.v1.tracks.length) {
-        html += `<div style="color:var(--ac);font-weight:700;font-size:12px;margin:10px 0 4px;">\u2500\u2500 Video 1 (kept) \u2500\u2500</div>`;
-        state.v1.tracks.forEach(t => {
-            const key = `v1_${t.index}`, ovr = state.trackOverrides[key] || {};
-            const curLang = ovr.language || t.language || 'und';
-            const curTitle = ovr.title || t.title || (LANG_NAMES[curLang] || '');
-            html += `<div class="row" style="margin:3px 0;"><span style="font-family:Consolas;font-size:11px;min-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${t.label}</span>`;
-            html += `<select class="meta-lang" data-key="${key}" style="width:150px;font-size:11px;">${langOptions.replace(`value="${curLang}"`, `value="${curLang}" selected`)}</select>`;
-            html += `<input type="text" class="meta-title" data-key="${key}" value="${curTitle.replace(/"/g, '&quot;')}" style="width:160px;font-size:11px;" placeholder="Title"></div>`;
+    let html = `<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:20px;min-width:500px;max-width:700px;max-height:80vh;overflow-y:auto;">`;
+    const title = which === 'v1' ? 'Video 1 Track Metadata' : 'Video 2 Track Metadata';
+    html += `<h3 style="color:var(--ac);margin-bottom:12px;">${title}</h3>`;
+    html += `<p style="color:var(--dim);font-size:12px;margin-bottom:12px;">Edit language and title for audio tracks.</p>`;
+
+    if (which === 'v1') {
+        const v1AudioStreams = (state.v1.streams || []).filter(s =>
+            s.codec_type === 'audio' && state.v1StreamSelected[s.stream_index]
+        );
+        if (!v1AudioStreams.length) { alert('No V1 audio tracks selected.'); return; }
+        v1AudioStreams.forEach((s, i) => {
+            const key = `v1_s${s.stream_index}`, ovr = state.trackOverrides[key] || {};
+            const curLang = ovr.language || s.language || 'und';
+            const curTitle = ovr.title || s.title || '';
+            const lbl = escapeHtml(streamLabel(s));
+            html += `<div class="row" style="margin:3px 0;"><span style="font-family:Consolas;font-size:11px;min-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${lbl}</span>`;
+            html += `<select class="meta-lang" data-key="${key}" style="width:150px;font-size:11px;">${buildLangOptions(curLang)}</select>`;
+            html += `<input type="text" class="meta-title" data-key="${key}" value="${escapeHtml(curTitle)}" style="width:160px;font-size:11px;" placeholder="Title"></div>`;
         });
-    }
-    const v2Filtered = state.v2.tracks.filter(t => v2Indices.includes(t.index));
-    if (v2Filtered.length) {
-        html += `<div style="color:var(--ac);font-weight:700;font-size:12px;margin:10px 0 4px;">\u2500\u2500 Video 2 (merged) \u2500\u2500</div>`;
+    } else {
+        const v2Indices = getV2Indices();
+        const v2Filtered = state.v2.tracks.filter(t => v2Indices.includes(t.index));
+        if (!v2Filtered.length) { alert('No V2 audio tracks selected.'); return; }
         v2Filtered.forEach(t => {
             const key = `v2_${t.index}`, ovr = state.trackOverrides[key] || {};
             const curLang = ovr.language || t.language || 'und';
-            const curTitle = ovr.title || t.title || (LANG_NAMES[curLang] ? `V2 ${LANG_NAMES[curLang]}` : `V2 Track ${t.index}`);
-            html += `<div class="row" style="margin:3px 0;"><span style="font-family:Consolas;font-size:11px;min-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${t.label}</span>`;
-            html += `<select class="meta-lang" data-key="${key}" style="width:150px;font-size:11px;">${langOptions.replace(`value="${curLang}"`, `value="${curLang}" selected`)}</select>`;
-            html += `<input type="text" class="meta-title" data-key="${key}" value="${curTitle.replace(/"/g, '&quot;')}" style="width:160px;font-size:11px;" placeholder="Title"></div>`;
+            const curTitle = ovr.title || t.title || '';
+            html += `<div class="row" style="margin:3px 0;"><span style="font-family:Consolas;font-size:11px;min-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(t.label)}</span>`;
+            html += `<select class="meta-lang" data-key="${key}" style="width:150px;font-size:11px;">${buildLangOptions(curLang)}</select>`;
+            html += `<input type="text" class="meta-title" data-key="${key}" value="${escapeHtml(curTitle)}" style="width:160px;font-size:11px;" placeholder="Title"></div>`;
         });
     }
-    html += `<div style="margin-top:16px;display:flex;justify-content:flex-end;gap:8px;">`;
+
+    html += `<div style="margin-top:16px;display:flex;gap:8px;">`;
+    html += `<button class="btn-sm" id="meta-clear-btn">Clear</button>`;
+    html += `<button class="btn-sm" id="meta-reset-btn">Reset</button>`;
+    html += `<button class="btn-sm" id="meta-auto-btn">Auto</button>`;
+    html += `<span style="flex:1"></span>`;
     html += `<button onclick="this.closest('div[style*=fixed]').remove()">Cancel</button>`;
     html += `<button class="btn-green" id="meta-ok-btn">OK</button></div></div>`;
     overlay.innerHTML = html;
     document.body.appendChild(overlay);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+    document.getElementById('meta-clear-btn').addEventListener('click', () => {
+        overlay.querySelectorAll('.meta-title').forEach(inp => { inp.value = ''; });
+    });
+
+    document.getElementById('meta-reset-btn').addEventListener('click', () => {
+        overlay.querySelectorAll('.meta-lang').forEach(sel => {
+            const key = sel.dataset.key;
+            let origLang = 'und';
+            if (key.startsWith('v1_s')) {
+                const si = parseInt(key.substring(4));
+                const stream = (state.v1.streams || []).find(s => s.stream_index === si);
+                if (stream) origLang = stream.language || 'und';
+            } else {
+                const tidx = parseInt(key.split('_')[1]);
+                const track = state.v2.tracks.find(t => t.index === tidx);
+                if (track) origLang = track.language || 'und';
+            }
+            sel.value = origLang;
+        });
+        overlay.querySelectorAll('.meta-title').forEach(inp => {
+            const key = inp.dataset.key;
+            let origTitle = '';
+            if (key.startsWith('v1_s')) {
+                const si = parseInt(key.substring(4));
+                const stream = (state.v1.streams || []).find(s => s.stream_index === si);
+                if (stream) origTitle = stream.title || '';
+            } else {
+                const tidx = parseInt(key.split('_')[1]);
+                const track = state.v2.tracks.find(t => t.index === tidx);
+                if (track) origTitle = track.title || '';
+            }
+            inp.value = origTitle;
+        });
+    });
+
+    document.getElementById('meta-auto-btn').addEventListener('click', () => {
+        overlay.querySelectorAll('.meta-lang').forEach(sel => {
+            const key = sel.dataset.key;
+            const lang = sel.value;
+            const titleInput = overlay.querySelector(`.meta-title[data-key="${key}"]`);
+            if (titleInput && lang && lang !== 'und') {
+                titleInput.value = LANG_NAMES[lang] || lang;
+            }
+        });
+    });
+
     document.getElementById('meta-ok-btn').addEventListener('click', () => {
         overlay.querySelectorAll('.meta-lang').forEach(sel => {
             const key = sel.dataset.key;
@@ -918,12 +1321,10 @@ function openMetadataEditor() {
             state.trackOverrides[key].title = inp.value.trim();
         });
         overlay.remove();
-        if (state.v1.tracks.length) fillTracks(1, state.v1.tracks, '', '');
-        if (state.v2.tracks.length) fillTracks(2, state.v2.tracks, '', '');
+        if (state.v2.tracks.length) fillTracks(2, state.v2.tracks);
         const at = parseFloat(document.getElementById('atempo-input').value);
         const off = parseFloat(document.getElementById('offset-input').value);
         if (!isNaN(at) && !isNaN(off)) prepareMerge(at, off, getV2Indices());
-        setStatus(`Metadata updated (${Object.keys(state.trackOverrides).length} tracks)`);
         log(`[Metadata] Updated ${Object.keys(state.trackOverrides).length} track(s)`);
     });
 }
@@ -931,53 +1332,196 @@ function openMetadataEditor() {
 document.getElementById('v1-path-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadVideo(1); });
 document.getElementById('v2-path-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadVideo(2); });
 
-
-function clearAll() {
-    document.getElementById('v1-path-input').value = '';
-    document.getElementById('v2-path-input').value = '';
-    document.getElementById('v1-file-info').textContent = '';
-    document.getElementById('v2-file-info').textContent = '';
-
-    document.getElementById('v1-tracks').innerHTML = '<span class="text-dim text-sm">Load Video 1...</span>';
-    document.getElementById('v2-tracks').innerHTML = '<span class="text-dim text-sm">Load Video 2...</span>';
-
-    for (const n of [1, 2]) {
-        const combo = document.getElementById(`v${n}-sync-track`);
-        combo.innerHTML = '<option value="0">0: (default)</option>';
-    }
-
-    document.getElementById('align-progress').classList.remove('progress-indeterminate');
-    document.getElementById('align-progress').querySelector('.fill').style.width = '0%';
-
-    document.getElementById('atempo-input').value = '1.000000';
-    document.getElementById('offset-input').value = '0.000';
-    document.getElementById('v2-manual').value = '0';
-
-    for (const k of ['r-mode','r-atempo','r-offset','r-inliers','r-fit','r-precision']) {
-        const el = document.getElementById(k);
-        el.textContent = '-';
-        el.style.color = '';
-    }
-    document.getElementById('results-detail').value = '';
-
-    document.getElementById('merge-progress').querySelector('.fill').style.width = '0%';
-
-    document.getElementById('log-box').value = '';
-
-    setStatus('{{ app_title | safe }}');
-
-    state.v1 = { path: '', tracks: [], duration: 0 };
-    state.v2 = { path: '', tracks: [], duration: 0 };
-    state.v2Selected = {};
-    state.trackOverrides = {};
-    state.mergeParams = null;
-    state.containerChange = false;
-    state.containerExt = '';
-
-    log('Cleared.');
+async function newSession() {
+    stopPoll();
+    ++_viewId;
+    _sessionId = null;
+    sessionStorage.removeItem('audiosync_session');
+    resetUI();
+    resetState();
+    renderSessionList(_sessionCache);
+    log('Ready.');
 }
 
-log('Ready.');
+async function switchToSession(sid, sess) {
+    stopPoll();
+    const myView = ++_viewId;
+    _sessionId = sid;
+    sessionStorage.setItem('audiosync_session', sid);
+    resetUI();
+    resetState();
+    renderSessionList(_sessionCache);
+
+    let v1Path = '', v2Path = '', outPath = '';
+    let lastAlignResult = null;
+    let lastMergeResult = null;
+    let activeTask = null;
+    let activeTaskType = null;
+
+    for (const [tid, t] of Object.entries(sess.tasks || {})) {
+        const p = t.params || {};
+        if (p.v1_path) v1Path = p.v1_path;
+        if (p.v2_path) v2Path = p.v2_path;
+        if (p.out_path) outPath = p.out_path;
+        if (t.type === 'align' && t.status === 'done' && t.result) {
+            lastAlignResult = t.result;
+        }
+        if (t.type === 'merge' && t.status === 'done' && t.result) {
+            lastMergeResult = t.result;
+        }
+        if (t.status === 'running') {
+            activeTask = tid;
+            activeTaskType = t.type;
+        }
+    }
+
+    if (v1Path) {
+        document.getElementById('v1-path-input').value = v1Path;
+        await loadVideo(1);
+        if (_viewId !== myView) return;
+    }
+    if (v2Path) {
+        document.getElementById('v2-path-input').value = v2Path;
+        await loadVideo(2);
+        if (_viewId !== myView) return;
+    }
+
+    if (outPath) {
+        document.getElementById('out-path-input').value = outPath;
+    }
+
+    if (lastAlignResult) {
+        showAlignResults(lastAlignResult);
+        log(`[Align] Restored: atempo=${lastAlignResult.speed_ratio.toFixed(6)}, offset=${lastAlignResult.offset.toFixed(3)}s`);
+    }
+
+    if (lastMergeResult) {
+        document.getElementById('merge-progress').querySelector('.fill').style.width = '100%';
+        log(`[Merge] Completed: ${lastMergeResult.elapsed} \u2192 ${lastMergeResult.output}`);
+    }
+
+    const freshSess = _sessionCache[sid];
+    if (freshSess) {
+        for (const [tid, t] of Object.entries(freshSess.tasks || {})) {
+            if (t.status === 'running') {
+                activeTask = tid;
+                activeTaskType = t.type;
+            }
+        }
+    }
+
+    if (activeTask && activeTaskType) {
+        lockButtons(activeTaskType);
+        log(`[${activeTaskType}] Reconnecting to running task...`);
+
+        if (activeTaskType === 'align') {
+            document.getElementById('align-progress').classList.add('progress-indeterminate');
+            startPoll('align', activeTask,
+                (task) => {
+                    if (_viewId !== myView) return;
+                    log(`[Align] ${task.progress || 'Processing...'}`);
+                },
+                (task) => {
+                    if (_viewId !== myView) return;
+                    unlockButtons();
+                    document.getElementById('align-progress').classList.remove('progress-indeterminate');
+                    if (task.status === 'done') {
+                        showAlignResults(task.result);
+                        log(`[Align] Done: ${task.result.inlier_count} inliers, atempo=${task.result.speed_ratio.toFixed(6)}, offset=${task.result.offset.toFixed(3)}s`);
+                    } else {
+                        log(`[Align] ${task.status}: ${task.error || ''}`);
+                    }
+                    refreshSessionList();
+                }
+            );
+        } else if (activeTaskType === 'merge') {
+            const progressBar = document.getElementById('merge-progress');
+            const mergeTask = sess.tasks[activeTask];
+            if (mergeTask && mergeTask.params) {
+                document.getElementById('atempo-input').value = mergeTask.params.atempo || '1.000000';
+                document.getElementById('offset-input').value = mergeTask.params.offset || '0.000';
+            }
+            startPoll('merge', activeTask,
+                (task) => {
+                    if (_viewId !== myView) return;
+                    const progress = task.progress || '';
+                    const muxMatch = progress.match(/mux:(\d+)/);
+                    if (muxMatch) {
+                        const pct = parseInt(muxMatch[1]);
+                        progressBar.querySelector('.fill').style.width = `${pct}%`;
+                        log(`[Merge] Writing output... ${pct}%`);
+                    } else {
+                        log(`[Merge] ${progress.replace(/^status:/, '')}`);
+                    }
+                },
+                (task) => {
+                    if (_viewId !== myView) return;
+                    unlockButtons();
+                    if (task.status === 'done') {
+                        progressBar.querySelector('.fill').style.width = '100%';
+                        log(`[Merge] Completed in ${task.result.elapsed} \u2192 ${task.result.output}`);
+                        alert('Output file created!\n' + task.result.output);
+                    } else {
+                        progressBar.querySelector('.fill').style.width = '0%';
+                        log(`[Merge] ${task.status}: ${task.error || ''}`);
+                    }
+                    refreshSessionList();
+                }
+            );
+        }
+    }
+}
+
+function renderSessionList(sessions) {
+    const container = document.getElementById('session-list');
+    container.innerHTML = '';
+
+    const newBtn = document.createElement('div');
+    newBtn.className = 'session-item' + (_sessionId === null ? ' active' : '');
+    newBtn.innerHTML = '<div class="session-label" style="color:var(--ac);">+ New Session</div>';
+    newBtn.addEventListener('click', newSession);
+    container.appendChild(newBtn);
+
+    for (const [sid, sess] of Object.entries(sessions)) {
+        const div = document.createElement('div');
+        div.className = 'session-item' + (_sessionId === sid ? ' active' : '');
+
+        const hasRunning = sess.active_task !== null;
+        const dotClass = hasRunning ? 'running' : 'idle';
+        const statusText = hasRunning ? 'running' : 'idle';
+
+        div.innerHTML =
+            `<div class="session-label">${escapeHtml(sess.label)}</div>` +
+            `<div class="session-status"><span class="status-dot ${dotClass}"></span>${statusText}</div>`;
+        div.addEventListener('click', () => {
+            switchToSession(sid, sess);
+        });
+        container.appendChild(div);
+    }
+}
+
+async function refreshSessionList() {
+    try {
+        const res = await fetch('/api/sessions');
+        _sessionCache = await res.json();
+        renderSessionList(_sessionCache);
+    } catch (e) {}
+}
+
+async function init() {
+    log('Ready.');
+    await refreshSessionList();
+
+    const savedSid = sessionStorage.getItem('audiosync_session');
+    if (savedSid && _sessionCache[savedSid]) {
+        switchToSession(savedSid, _sessionCache[savedSid]);
+    } else if (savedSid) {
+        sessionStorage.removeItem('audiosync_session');
+    }
+}
+
+init();
+setInterval(refreshSessionList, 10000);
 </script>
 </body>
 </html>

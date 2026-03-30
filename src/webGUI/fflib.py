@@ -73,18 +73,6 @@ def _require_ffmpeg():
     return _ffmpeg
 
 
-def open_file(path):
-    if isinstance(path, bytes):
-        path = path.decode("utf-8")
-    if not os.path.isfile(path):
-        raise RuntimeError(f"File not found: {path}")
-    return path
-
-
-def close_file(handle):
-    pass
-
-
 def probe(handle):
     fp = _require_ffprobe()
     raw = _run([fp, "-v", "quiet", "-print_format", "json",
@@ -92,31 +80,50 @@ def probe(handle):
     data = json.loads(raw)
 
     audio = []
-    video = []
+    streams = []
     audio_idx = 0
     for s in data.get("streams", []):
-        if s.get("codec_type") == "audio":
+        codec_type = s.get("codec_type", "unknown")
+        stream_index = int(s.get("index", 0))
+        tags = s.get("tags") or {}
+        language = tags.get("language", "und")
+        title = tags.get("title", "")
+        codec = s.get("codec_name", "?")
+
+        entry = {
+            "stream_index": stream_index,
+            "codec_type": codec_type,
+            "codec": codec,
+            "language": language,
+            "title": title,
+        }
+
+        if codec_type == "audio":
+            entry["audio_index"] = audio_idx
+            entry["channels"] = int(s.get("channels", 0))
+            entry["sample_rate"] = int(s.get("sample_rate", 0))
             audio.append({
                 "index": audio_idx,
-                "stream_index": s.get("index", audio_idx),
-                "codec": s.get("codec_name", "?"),
+                "stream_index": stream_index,
+                "codec": codec,
                 "channels": int(s.get("channels", 0)),
                 "sample_rate": int(s.get("sample_rate", 0)),
-                "language": (s.get("tags") or {}).get("language", "und"),
+                "language": language,
+                "title": title,
             })
             audio_idx += 1
-        elif s.get("codec_type") == "video":
-            video.append({
-                "index": s.get("index", 0),
-                "codec": s.get("codec_name", "?"),
-                "width": int(s.get("width", 0)),
-                "height": int(s.get("height", 0)),
-            })
+        elif codec_type == "video":
+            entry["width"] = int(s.get("width", 0))
+            entry["height"] = int(s.get("height", 0))
+        elif codec_type == "subtitle":
+            entry["subtitle_codec"] = codec
+
+        streams.append(entry)
 
     fmt = data.get("format", {})
     duration = float(fmt.get("duration", 0))
 
-    return {"audio": audio, "video": video, "duration": duration}
+    return {"audio": audio, "streams": streams, "duration": duration}
 
 
 def get_duration(handle):
@@ -136,20 +143,45 @@ def get_sample_rate(handle, audio_track_index):
     return 48000
 
 
-def decode_audio(handle, audio_track_index, target_sr):
+def decode_audio(handle, audio_track_index, target_sr, vocal_filter=False):
     ff = _require_ffmpeg()
     cmd = [ff, "-v", "quiet",
            "-i", handle,
-           "-map", f"0:a:{audio_track_index}",
-           "-ac", "1",
-           "-ar", str(target_sr),
-           "-f", "f32le",
-           "-acodec", "pcm_f32le",
-           "pipe:1"]
-    raw = _run(cmd, timeout=600)
+           "-map", f"0:a:{audio_track_index}"]
+
+    if vocal_filter:
+        cmd += ["-af",
+                f"bandreject=f=1000:width_type=h:w=2700,aresample={target_sr}"]
+    else:
+        cmd += ["-ar", str(target_sr)]
+
+    cmd += ["-ac", "1",
+            "-f", "f32le",
+            "-acodec", "pcm_f32le",
+            "pipe:1"]
+    raw = _run(cmd, timeout=3600)
     if len(raw) == 0:
         return np.array([], dtype=np.float32)
     return np.frombuffer(raw, dtype=np.float32).copy()
+
+
+FRAME_W, FRAME_H = 160, 120
+
+
+def extract_frame(handle, timestamp, width=FRAME_W, height=FRAME_H):
+    ff = _require_ffmpeg()
+    cmd = [ff, "-v", "quiet",
+           "-ss", f"{timestamp:.3f}",
+           "-i", handle,
+           "-vframes", "1",
+           "-s", f"{width}x{height}",
+           "-f", "rawvideo",
+           "-pix_fmt", "gray",
+           "pipe:1"]
+    raw = _run(cmd, timeout=30)
+    if len(raw) != height * width:
+        return None
+    return np.frombuffer(raw, dtype=np.uint8).reshape(height, width).astype(np.float32)
 
 
 def version_info():

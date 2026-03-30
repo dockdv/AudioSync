@@ -1,6 +1,9 @@
 .easy-git/
 .samples/
-CLAUDE.md
+ffmpeg
+ffmpeg.exe
+ffprobe
+ffprobe.exe
 
 .venv/
 
