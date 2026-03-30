@@ -218,7 +218,7 @@ input[type="checkbox"] { accent-color: var(--ac); }
     outline: none;
 }
 .log-box { height: 120px; }
-.results-box { height: 60px; }
+.results-box { height: 180px; }
 
 .progress-bar {
     height: 5px;
@@ -368,6 +368,9 @@ input[type="checkbox"] { accent-color: var(--ac); }
                     <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
                         <input type="checkbox" id="vocal-filter-cb" checked> Filter vocals (cross-language)
                     </label>
+                    <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
+                        <input type="checkbox" id="fast-decode-cb"> Fast decode (mono ch.1)
+                    </label>
                 </div>
                 <div class="row mt-4">
                     <button class="btn-accent" id="align-btn" onclick="runAlign()" style="flex:1">Auto-Align</button>
@@ -384,7 +387,7 @@ input[type="checkbox"] { accent-color: var(--ac); }
                     <label class="text-sm">Atempo:</label>
                     <input type="text" id="atempo-input" value="1.000000" style="width:130px">
                 </div>
-                <div class="row">
+                <div class="row" id="global-offset-row">
                     <label class="text-sm">Offset (s):</label>
                     <input type="text" id="offset-input" value="0.000" style="width:130px">
                 </div>
@@ -670,6 +673,22 @@ function fillV1Streams(streams) {
         return;
     }
 
+    const selBar = document.createElement('div');
+    selBar.style.cssText = 'margin-bottom:4px;font-size:11px;display:flex;gap:8px;';
+    const selAll = document.createElement('a');
+    selAll.textContent = 'Select all';
+    selAll.href = '#';
+    selAll.style.color = 'var(--ac)';
+    selAll.addEventListener('click', e => { e.preventDefault(); container.querySelectorAll('input[type=checkbox]').forEach(cb => { cb.checked = true; state.v1StreamSelected[parseInt(cb.dataset.si)] = true; }); });
+    const selNone = document.createElement('a');
+    selNone.textContent = 'Select none';
+    selNone.href = '#';
+    selNone.style.color = 'var(--ac)';
+    selNone.addEventListener('click', e => { e.preventDefault(); container.querySelectorAll('input[type=checkbox]').forEach(cb => { cb.checked = false; state.v1StreamSelected[parseInt(cb.dataset.si)] = false; }); });
+    selBar.appendChild(selAll);
+    selBar.appendChild(selNone);
+    container.appendChild(selBar);
+
     streams.forEach(s => {
         state.v1StreamSelected[s.stream_index] = true;
         const label = document.createElement('label');
@@ -697,20 +716,37 @@ function fillTracks(n, tracks) {
         return;
     }
 
-    state.v2Selected = {};
+    const selBar = document.createElement('div');
+    selBar.style.cssText = 'margin-bottom:4px;font-size:11px;display:flex;gap:8px;';
+    const selAll = document.createElement('a');
+    selAll.textContent = 'Select all';
+    selAll.href = '#';
+    selAll.style.color = 'var(--ac)';
+    selAll.addEventListener('click', e => { e.preventDefault(); container.querySelectorAll('input[type=checkbox]').forEach(cb => { cb.checked = true; state.v2Selected[parseInt(cb.dataset.idx)] = true; }); });
+    const selNone = document.createElement('a');
+    selNone.textContent = 'Select none';
+    selNone.href = '#';
+    selNone.style.color = 'var(--ac)';
+    selNone.addEventListener('click', e => { e.preventDefault(); container.querySelectorAll('input[type=checkbox]').forEach(cb => { cb.checked = false; state.v2Selected[parseInt(cb.dataset.idx)] = false; }); });
+    selBar.appendChild(selAll);
+    selBar.appendChild(selNone);
+    container.appendChild(selBar);
+
     tracks.forEach(t => {
         const key = `v2_${t.index}`;
-        state.v2Selected[t.index] = true;
+        if (state.v2Selected[t.index] === undefined) state.v2Selected[t.index] = true;
+        const checked = state.v2Selected[t.index];
         const lang = (state.trackOverrides[key] || {}).language || '';
         const langStr = lang && LANG_NAMES[lang] ? ` \u2192 ${LANG_NAMES[lang]}` : '';
-        const titleOvr = (state.trackOverrides[key] || {}).title || '';
+        const ovr = state.trackOverrides[key] || {};
+        const titleOvr = ovr.title !== undefined ? ovr.title : '';
         const titleStr = titleOvr ? ` "${titleOvr}"` : '';
         const label = document.createElement('label');
         label.className = 'track-item';
         label.style.cursor = 'pointer';
         const cb = document.createElement('input');
         cb.type = 'checkbox';
-        cb.checked = true;
+        cb.checked = checked;
         cb.dataset.idx = t.index;
         cb.addEventListener('change', () => { state.v2Selected[t.index] = cb.checked; });
         label.appendChild(cb);
@@ -783,11 +819,13 @@ async function runAlign() {
     const t2 = parseInt(document.getElementById('v2-sync-track').value) || 0;
 
     const vocalFilter = document.getElementById('vocal-filter-cb').checked;
+    const fastDecode = document.getElementById('fast-decode-cb').checked;
 
     const result = await apiPost(`/api/session/${_sessionId}/align`, {
         v1_path: state.v1.path, v2_path: state.v2.path,
         v1_track: t1, v2_track: t2,
         vocal_filter: vocalFilter,
+        fast_decode: fastDecode,
     });
 
     if (_viewId !== myView) return;
@@ -892,7 +930,7 @@ function prepareMerge(atempo, offset, v2Indices) {
         if (!state.v1StreamSelected[s.stream_index]) continue;
         const key = `v1_s${s.stream_index}`;
         const ovr = state.trackOverrides[key] || {};
-        metadata.push({ language: ovr.language || s.language || 'und', title: ovr.title || s.title || '' });
+        metadata.push({ language: ovr.language || s.language || 'und', title: ovr.title !== undefined ? ovr.title : (s.title || '') });
     }
     for (const tidx of v2Indices) {
         const key = `v2_${tidx}`;
@@ -911,10 +949,13 @@ function prepareMerge(atempo, offset, v2Indices) {
 function renderSegmentOverrides() {
     const container = document.getElementById('segment-overrides');
     const segs = state.segments;
+    const globalRow = document.getElementById('global-offset-row');
     if (!segs || segs.length <= 1) {
         container.innerHTML = '';
+        if (globalRow) globalRow.style.display = '';
         return;
     }
+    if (globalRow) globalRow.style.display = 'none';
     let html = '<div class="text-dim text-sm mt-4" style="margin-bottom:4px">Segment offsets:</div>';
     for (let i = 0; i < segs.length; i++) {
         const s = segs[i];
@@ -994,6 +1035,7 @@ async function runMerge() {
 
     refreshSessionList();
 
+    let lastMuxPct = -1;
     startPoll('merge', result.task_id,
         (task) => {
             if (_viewId !== myView) return;
@@ -1002,7 +1044,10 @@ async function runMerge() {
             if (muxMatch) {
                 const pct = parseInt(muxMatch[1]);
                 progressBar.querySelector('.fill').style.width = `${pct}%`;
-                log(`[Merge] Writing output... ${pct}%`);
+                if (pct !== lastMuxPct) {
+                    lastMuxPct = pct;
+                    log(`[Merge] Writing output... ${pct}%`);
+                }
             } else {
                 log(`[Merge] ${progress.replace(/^status:/, '')}`);
             }
@@ -1232,7 +1277,7 @@ function openMetadataEditor(which) {
         v1AudioStreams.forEach((s, i) => {
             const key = `v1_s${s.stream_index}`, ovr = state.trackOverrides[key] || {};
             const curLang = ovr.language || s.language || 'und';
-            const curTitle = ovr.title || s.title || '';
+            const curTitle = ovr.title !== undefined ? ovr.title : (s.title || '');
             const lbl = escapeHtml(streamLabel(s));
             html += `<div class="row" style="margin:3px 0;"><span style="font-family:Consolas;font-size:11px;min-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${lbl}</span>`;
             html += `<select class="meta-lang" data-key="${key}" style="width:150px;font-size:11px;">${buildLangOptions(curLang)}</select>`;
@@ -1245,7 +1290,7 @@ function openMetadataEditor(which) {
         v2Filtered.forEach(t => {
             const key = `v2_${t.index}`, ovr = state.trackOverrides[key] || {};
             const curLang = ovr.language || t.language || 'und';
-            const curTitle = ovr.title || t.title || '';
+            const curTitle = ovr.title !== undefined ? ovr.title : (t.title || '');
             html += `<div class="row" style="margin:3px 0;"><span style="font-family:Consolas;font-size:11px;min-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(t.label)}</span>`;
             html += `<select class="meta-lang" data-key="${key}" style="width:150px;font-size:11px;">${buildLangOptions(curLang)}</select>`;
             html += `<input type="text" class="meta-title" data-key="${key}" value="${escapeHtml(curTitle)}" style="width:160px;font-size:11px;" placeholder="Title"></div>`;
@@ -1375,6 +1420,16 @@ async function switchToSession(sid, sess) {
         }
     }
 
+    let savedV1Indices = null, savedV2Indices = null, savedMetadata = null;
+    for (const [tid, t] of Object.entries(sess.tasks || {})) {
+        const p = t.params || {};
+        if (t.type === 'merge' && p.v1_stream_indices) {
+            savedV1Indices = p.v1_stream_indices;
+            savedV2Indices = p.v2_indices || null;
+            savedMetadata = p.metadata || null;
+        }
+    }
+
     if (v1Path) {
         document.getElementById('v1-path-input').value = v1Path;
         await loadVideo(1);
@@ -1384,6 +1439,55 @@ async function switchToSession(sid, sess) {
         document.getElementById('v2-path-input').value = v2Path;
         await loadVideo(2);
         if (_viewId !== myView) return;
+    }
+
+    if (savedV1Indices) {
+        const v1Set = new Set(savedV1Indices);
+        for (const si of Object.keys(state.v1StreamSelected)) {
+            const idx = parseInt(si);
+            state.v1StreamSelected[idx] = v1Set.has(idx);
+        }
+        document.querySelectorAll('#v1-tracks input[type=checkbox]').forEach(cb => {
+            const si = parseInt(cb.dataset.si);
+            cb.checked = v1Set.has(si);
+        });
+    }
+    if (savedV2Indices) {
+        const v2Set = new Set(savedV2Indices);
+        for (const ti of Object.keys(state.v2Selected)) {
+            const idx = parseInt(ti);
+            state.v2Selected[idx] = v2Set.has(idx);
+        }
+        document.querySelectorAll('#v2-tracks input[type=checkbox]').forEach(cb => {
+            const idx = parseInt(cb.dataset.idx);
+            cb.checked = v2Set.has(idx);
+        });
+    }
+    if (savedMetadata && savedV1Indices) {
+        let mi = 0;
+        for (const si of savedV1Indices) {
+            if (mi < savedMetadata.length) {
+                const key = `v1_s${si}`;
+                state.trackOverrides[key] = {
+                    language: savedMetadata[mi].language || '',
+                    title: savedMetadata[mi].title || '',
+                };
+                mi++;
+            }
+        }
+        if (savedV2Indices) {
+            for (const ti of savedV2Indices) {
+                if (mi < savedMetadata.length) {
+                    const key = `v2_${ti}`;
+                    state.trackOverrides[key] = {
+                        language: savedMetadata[mi].language || '',
+                        title: savedMetadata[mi].title || '',
+                    };
+                    mi++;
+                }
+            }
+        }
+        if (state.v2.tracks.length) fillTracks(2, state.v2.tracks);
     }
 
     if (outPath) {

@@ -143,15 +143,20 @@ def get_sample_rate(handle, audio_track_index):
     return 48000
 
 
-def decode_audio(handle, audio_track_index, target_sr, vocal_filter=False):
+def decode_audio(handle, audio_track_index, target_sr, vocal_filter=False,
+                 fast_decode=False):
     ff = _require_ffmpeg()
     cmd = [ff, "-v", "quiet",
            "-i", handle,
            "-map", f"0:a:{audio_track_index}"]
 
     if vocal_filter:
-        cmd += ["-af",
-                f"bandreject=f=1000:width_type=h:w=2700,aresample={target_sr}"]
+        af = f"bandreject=f=1000:width_type=h:w=2700,aresample={target_sr}"
+        if fast_decode:
+            af = f"pan=mono|c0=c0,{af}"
+        cmd += ["-af", af]
+    elif fast_decode:
+        cmd += ["-af", f"pan=mono|c0=c0,aresample={target_sr}"]
     else:
         cmd += ["-ar", str(target_sr)]
 

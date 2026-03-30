@@ -247,6 +247,7 @@ def api_align(sid):
     t1 = data.get("v1_track", 0)
     t2 = data.get("v2_track", 0)
     vocal_filter = data.get("vocal_filter", False)
+    fast_decode = data.get("fast_decode", False)
 
     if not v1 or not os.path.isfile(v1):
         return jsonify({"error": f"V1 not found: {v1}"}), 400
@@ -257,6 +258,7 @@ def api_align(sid):
         "v1_path": v1, "v2_path": v2,
         "v1_track": t1, "v2_track": t2,
         "vocal_filter": vocal_filter,
+        "fast_decode": fast_decode,
     })
     if err:
         return jsonify({"error": err}), 409
@@ -268,7 +270,8 @@ def api_align(sid):
         try:
             r = auto_align_audio(v1, v2, track1=t1, track2=t2,
                                  progress_cb=cb, cancel=cancel,
-                                 vocal_filter=vocal_filter)
+                                 vocal_filter=vocal_filter,
+                                 fast_decode=fast_decode)
             result = {}
             for k, v in r.items():
                 if k == "inlier_pairs":

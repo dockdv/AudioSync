@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import fflib
 
@@ -218,9 +219,10 @@ def extract_audio_fingerprints(filepath, track_index=0,
 
 
 def _decode_full_audio(filepath, track_index, sr, cancel=None,
-                       vocal_filter=False):
+                       vocal_filter=False, fast_decode=False):
     audio = fflib.decode_audio(filepath, track_index, sr,
-                               vocal_filter=vocal_filter)
+                               vocal_filter=vocal_filter,
+                               fast_decode=fast_decode)
     if len(audio) == 0:
         raise RuntimeError("No audio data decoded")
     return audio
@@ -615,7 +617,7 @@ def _snap_speed_to_candidate(a, t1_inliers, t2_inliers):
 
 def auto_align_audio(fp1, fp2, track1=0, track2=0,
                       progress_cb=None, cancel=None,
-                      vocal_filter=False):
+                      vocal_filter=False, fast_decode=False):
     dur1 = get_duration(fp1)
     dur2 = get_duration(fp2)
     hop = AUDIO_HOP_SEC
@@ -624,13 +626,14 @@ def auto_align_audio(fp1, fp2, track1=0, track2=0,
     hop2 = dur2 / max_s if (dur2 > 0 and dur2 / hop > max_s) else hop
 
     if progress_cb:
-        progress_cb("status", "Decoding V1 audio...")
-    audio1 = _decode_full_audio(fp1, track1, AUDIO_SAMPLE_RATE, cancel)
-    if cancel:
-        cancel.check()
-    if progress_cb:
-        progress_cb("status", "Decoding V2 audio...")
-    audio2 = _decode_full_audio(fp2, track2, AUDIO_SAMPLE_RATE, cancel)
+        progress_cb("status", "Decoding V1 + V2 audio...")
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        f1 = pool.submit(_decode_full_audio, fp1, track1, AUDIO_SAMPLE_RATE,
+                         cancel, fast_decode=fast_decode)
+        f2 = pool.submit(_decode_full_audio, fp2, track2, AUDIO_SAMPLE_RATE,
+                         cancel, fast_decode=fast_decode)
+        audio1 = f1.result()
+        audio2 = f2.result()
     if cancel:
         cancel.check()
 
@@ -687,12 +690,13 @@ def auto_align_audio(fp1, fp2, track1=0, track2=0,
     if vocal_filter:
         if progress_cb:
             progress_cb("status", "Decoding band-filtered audio for xcorr...")
-        xcorr_a1 = _decode_full_audio(fp1, track1, AUDIO_SAMPLE_RATE,
-                                      cancel, vocal_filter=True)
-        if cancel:
-            cancel.check()
-        xcorr_a2 = _decode_full_audio(fp2, track2, AUDIO_SAMPLE_RATE,
-                                      cancel, vocal_filter=True)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            f1 = pool.submit(_decode_full_audio, fp1, track1,
+                             AUDIO_SAMPLE_RATE, cancel, vocal_filter=True)
+            f2 = pool.submit(_decode_full_audio, fp2, track2,
+                             AUDIO_SAMPLE_RATE, cancel, vocal_filter=True)
+            xcorr_a1 = f1.result()
+            xcorr_a2 = f2.result()
         if cancel:
             cancel.check()
     else:
@@ -1095,19 +1099,34 @@ def merge_with_ffmpeg(v1_path, v2_path, out_path, atempo, offset,
     else:
         cmd += ["-i", v2_path]
 
+    v1_info = fflib.probe(v1_path)
+    v1_stream_types = {s["stream_index"]: s["codec_type"] for s in v1_info.get("streams", [])}
+
     if v1_stream_indices is not None:
-        for si in v1_stream_indices:
-            cmd += ["-map", f"0:{si}"]
+        v1_vid = [si for si in v1_stream_indices if v1_stream_types.get(si) == "video"]
+        v1_aud = [si for si in v1_stream_indices if v1_stream_types.get(si) == "audio"]
+        v1_rest = [si for si in v1_stream_indices if si not in v1_vid and si not in v1_aud]
     else:
-        cmd += ["-map", "0"]
+        all_si = sorted(v1_stream_types.keys())
+        v1_vid = [si for si in all_si if v1_stream_types[si] == "video"]
+        v1_aud = [si for si in all_si if v1_stream_types[si] == "audio"]
+        v1_rest = [si for si in all_si if si not in v1_vid and si not in v1_aud]
+
+    for si in v1_vid:
+        cmd += ["-map", f"0:{si}"]
+    for si in v1_aud:
+        cmd += ["-map", f"0:{si}"]
 
     if use_piecewise:
-        cmd += ["-c", "copy"]
-
         cmd += ["-filter_complex", "; ".join(fc_parts)]
 
         for out_label in output_labels:
             cmd += ["-map", out_label]
+
+        for si in v1_rest:
+            cmd += ["-map", f"0:{si}"]
+
+        cmd += ["-c", "copy"]
 
         v1_out_audio = v1_n_audio
         for i in range(len(v2_indices)):
@@ -1117,6 +1136,9 @@ def merge_with_ffmpeg(v1_path, v2_path, out_path, atempo, offset,
     else:
         for tidx in v2_indices:
             cmd += ["-map", f"1:a:{tidx}"]
+
+        for si in v1_rest:
+            cmd += ["-map", f"0:{si}"]
 
         cmd += ["-c", "copy"]
 
@@ -1170,17 +1192,28 @@ def merge_with_ffmpeg(v1_path, v2_path, out_path, atempo, offset,
     time_re = re.compile(r"time=(\d+):(\d+):(\d+)\.(\d+)")
     stderr_lines = []
     try:
-        for line in proc.stderr:
-            if cancel and cancel.is_cancelled:
-                proc.kill()
-                raise CancelledError("Cancelled")
-            stderr_lines.append(line.rstrip())
-            all_times = time_re.findall(line)
-            if all_times and progress_cb and v1_dur > 0:
-                h, mi, s, frac_str = int(all_times[-1][0]), int(all_times[-1][1]), int(all_times[-1][2]), all_times[-1][3]
-                pos = h * 3600 + mi * 60 + s + int(frac_str) / (10 ** len(frac_str))
-                pct = min(99, int(pos / v1_dur * 100))
-                progress_cb("progress", f"mux:{pct}")
+        buf = []
+        while True:
+            ch = proc.stderr.read(1)
+            if not ch:
+                break
+            if ch in ('\r', '\n'):
+                line = ''.join(buf)
+                buf = []
+                if not line:
+                    continue
+                if cancel and cancel.is_cancelled:
+                    proc.kill()
+                    raise CancelledError("Cancelled")
+                stderr_lines.append(line)
+                all_times = time_re.findall(line)
+                if all_times and progress_cb and v1_dur > 0:
+                    h, mi, s, frac_str = int(all_times[-1][0]), int(all_times[-1][1]), int(all_times[-1][2]), all_times[-1][3]
+                    pos = h * 3600 + mi * 60 + s + int(frac_str) / (10 ** len(frac_str))
+                    pct = min(99, int(pos / v1_dur * 100))
+                    progress_cb("progress", f"mux:{pct}")
+            else:
+                buf.append(ch)
 
         proc.wait()
         if proc.returncode != 0:
