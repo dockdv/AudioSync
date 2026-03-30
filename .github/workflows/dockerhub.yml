@@ -51,6 +51,8 @@ jobs:
           file: src/contApp/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
+          secrets: |
+            ffmpeg_pat=${{ secrets.FFMPEG_PAT }}
           tags: |
             ${{ env.IMAGE_NAME }}:latest
             ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.date }}

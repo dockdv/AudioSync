@@ -1,10 +1,22 @@
 FROM python:3.12-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl xz-utils && \
-    curl -L https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz \
-    | tar -xJ --strip-components=2 -C /usr/local/bin/ --wildcards '*/bin/ffmpeg' '*/bin/ffprobe' && \
-    rm -rf /var/lib/apt/lists/*
+ARG TARGETARCH
+
+RUN --mount=type=secret,id=ffmpeg_pat \
+    apt-get update && apt-get install -y --no-install-recommends curl && \
+    ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "linuxarm64" || echo "linux64") && \
+    TOKEN=$(cat /run/secrets/ffmpeg_pat) && \
+    RELEASE_URL="https://api.github.com/repos/dockdv/ffmpeg-bin/releases/latest" && \
+    for BIN in ffmpeg ffprobe; do \
+        URL=$(curl -sf -H "Authorization: token ${TOKEN}" "$RELEASE_URL" \
+            | grep -o "\"browser_download_url\": *\"[^\"]*${BIN}-${ARCH}\"" \
+            | cut -d'"' -f4) && \
+        curl -sfL -H "Authorization: token ${TOKEN}" \
+            -H "Accept: application/octet-stream" \
+            -o /usr/local/bin/${BIN} "$URL" && \
+        chmod +x /usr/local/bin/${BIN}; \
+    done && \
+    apt-get purge -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
 COPY src/webGUI/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
