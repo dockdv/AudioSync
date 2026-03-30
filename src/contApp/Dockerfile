@@ -2,6 +2,13 @@ FROM python:3.12-slim
 
 ARG TARGETARCH
 
+COPY src/webGUI/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+WORKDIR /app
+
+COPY src/webGUI/ ./src/webGUI/
+
 RUN --mount=type=secret,id=ffmpeg_pat \
     apt-get update && apt-get install -y --no-install-recommends curl && \
     ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "linuxarm64" || echo "linux64") && \
@@ -13,17 +20,10 @@ RUN --mount=type=secret,id=ffmpeg_pat \
             | cut -d'"' -f4) && \
         curl -sfL -H "Authorization: token ${TOKEN}" \
             -H "Accept: application/octet-stream" \
-            -o /usr/local/bin/${BIN} "$URL" && \
-        chmod +x /usr/local/bin/${BIN}; \
+            -o /app/src/webGUI/${BIN} "$URL" && \
+        chmod +x /app/src/webGUI/${BIN}; \
     done && \
-    apt-get purge -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
-
-COPY src/webGUI/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
-
-WORKDIR /app
-
-COPY src/webGUI/ ./src/webGUI/
+    rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /app/src/webGUI/uploads
 
