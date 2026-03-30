@@ -497,7 +497,7 @@ async function apiPost(url, data) {
     if (!res.ok) {
         try { return await res.json(); } catch { return { error: `HTTP ${res.status}` }; }
     }
-    return res.json();
+    try { return await res.json(); } catch { return { error: 'Invalid JSON response' }; }
 }
 
 function lockButtons(runningType) {

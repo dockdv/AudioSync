@@ -1083,6 +1083,8 @@ def _run_ffmpeg(cmd, v1_dur, progress_cb, cancel, progress_prefix="mux"):
                     continue
                 if cancel and cancel.is_cancelled:
                     proc.kill()
+                    proc.wait()
+                    proc.stderr.close()
                     raise CancelledError("Cancelled")
                 stderr_lines.append(line)
                 all_times = time_re.findall(line)
@@ -1098,7 +1100,11 @@ def _run_ffmpeg(cmd, v1_dur, progress_cb, cancel, progress_prefix="mux"):
             else:
                 buf.append(ch)
 
-        proc.wait()
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
         if proc.returncode != 0:
             tail = "\n".join(stderr_lines[-20:])
             raise RuntimeError(
