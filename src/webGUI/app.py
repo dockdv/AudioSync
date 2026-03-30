@@ -128,18 +128,22 @@ def _serialize_session(sess):
         "label": sess["label"],
         "active_task": sess["active_task"],
         "tasks": tasks,
+        "created_at": sess["created_at"],
     }
 
 
 @app.route("/")
 def index():
     paths = fflib.get_paths()
+    versions = fflib.library_versions
     return render_template("index.html",
                            app_title=APP_TITLE,
                            all_languages=ALL_LANGUAGES,
                            lang_names=LANG_NAMES,
                            ffmpeg_path=paths["ffmpeg"],
-                           ffprobe_path=paths["ffprobe"])
+                           ffprobe_path=paths["ffprobe"],
+                           ffmpeg_version=versions.get("ffmpeg", ""),
+                           ffprobe_version=versions.get("ffprobe", ""))
 
 
 @app.route("/api/browse", methods=["POST"])
@@ -428,6 +432,15 @@ if __name__ == "__main__":
 
     import logging
     logging.getLogger("waitress.queue").setLevel(logging.ERROR)
+
+    import signal
+
+    def _shutdown(signum, frame):
+        print("\nShutting down...")
+        os._exit(0)
+
+    signal.signal(signal.SIGINT, _shutdown)
+    signal.signal(signal.SIGTERM, _shutdown)
 
     from waitress import serve
     serve(app, host="0.0.0.0", port=5000, threads=8)

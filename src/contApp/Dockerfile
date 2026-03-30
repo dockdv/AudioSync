@@ -1,7 +1,9 @@
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg curl && \
+    curl xz-utils && \
+    curl -L https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz \
+    | tar -xJ --strip-components=2 -C /usr/local/bin/ --wildcards '*/bin/ffmpeg' '*/bin/ffprobe' && \
     rm -rf /var/lib/apt/lists/*
 
 COPY src/webGUI/requirements.txt /tmp/requirements.txt

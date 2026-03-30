@@ -16,7 +16,8 @@ def _find_binary(name):
     if env_val and os.path.isfile(env_val):
         return env_val
 
-    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    base = os.path.join(script_dir, "..", "..")
     machine = platform.machine().lower()
     if machine in ("amd64", "x86_64", "x64"):
         arch = "x64"
@@ -26,7 +27,8 @@ def _find_binary(name):
         arch = "x64"
     plat = "win" if sys.platform == "win32" else "linux"
     suffixes = [f"{name}.exe", name] if sys.platform == "win32" else [name]
-    for d in [os.path.join(base, "ffmpeg-lib", plat, arch),
+    for d in [script_dir,
+              os.path.join(base, "ffmpeg-lib", plat, arch),
               os.path.join(base, "ffmpeg-lib", arch)]:
         for s in suffixes:
             p = os.path.join(d, s)
@@ -108,6 +110,7 @@ def probe(handle):
                 "codec": codec,
                 "channels": int(s.get("channels", 0)),
                 "sample_rate": int(s.get("sample_rate", 0)),
+                "bit_rate": int(s.get("bit_rate", 0) or 0),
                 "language": language,
                 "title": title,
             })
@@ -190,15 +193,20 @@ def extract_frame(handle, timestamp, width=FRAME_W, height=FRAME_H):
 
 
 def version_info():
-    ff = _find_binary("ffmpeg")
-    if not ff:
-        return {}
-    try:
-        raw = _run([ff, "-version"], timeout=10)
-        first_line = raw.decode("utf-8", errors="replace").split("\n")[0]
-        return {"ffmpeg": first_line.strip()}
-    except Exception:
-        return {}
+    result = {}
+    for name in ("ffmpeg", "ffprobe"):
+        binary = _find_binary(name)
+        if not binary:
+            continue
+        try:
+            raw = _run([binary, "-version"], timeout=10)
+            first_line = raw.decode("utf-8", errors="replace").split("\n")[0]
+            parts = first_line.split()
+            ver = parts[2] if len(parts) >= 3 else first_line.strip()
+            result[name] = ver
+        except Exception:
+            pass
+    return result
 
 
 library_versions = {}

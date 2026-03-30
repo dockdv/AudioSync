@@ -304,11 +304,11 @@ input[type="checkbox"] { accent-color: var(--ac); }
     <div class="file-inputs">
         <div class="file-row">
             <span class="label" style="color:var(--dim)">ffmpeg</span>
-            <span class="text-mono text-sm" style="flex:1;color:{{ 'var(--green)' if ffmpeg_path else 'var(--err)' }}">{{ ffmpeg_path or 'not found' }}</span>
+            <span class="text-mono text-sm" style="flex:1;color:{{ 'var(--green)' if ffmpeg_path else 'var(--err)' }}">{{ ffmpeg_path or 'not found' }}{{ ' — ' + ffmpeg_version if ffmpeg_version else '' }}</span>
         </div>
         <div class="file-row">
             <span class="label" style="color:var(--dim)">ffprobe</span>
-            <span class="text-mono text-sm" style="flex:1;color:{{ 'var(--green)' if ffprobe_path else 'var(--err)' }}">{{ ffprobe_path or 'not found' }}</span>
+            <span class="text-mono text-sm" style="flex:1;color:{{ 'var(--green)' if ffprobe_path else 'var(--err)' }}">{{ ffprobe_path or 'not found' }}{{ ' — ' + ffprobe_version if ffprobe_version else '' }}</span>
         </div>
     </div>
 
@@ -438,7 +438,7 @@ const LANG_NAMES = {{ lang_names | tojson }};
 
 const state = {
     v1: { path: '', tracks: [], streams: [], duration: 0 },
-    v2: { path: '', tracks: [], duration: 0 },
+    v2: { path: '', tracks: [], streams: [], duration: 0 },
     v1StreamSelected: {},
     v2Selected: {},
     trackOverrides: {},
@@ -591,7 +591,7 @@ function resetUI() {
 
 function resetState() {
     state.v1 = { path: '', tracks: [], streams: [], duration: 0 };
-    state.v2 = { path: '', tracks: [], duration: 0 };
+    state.v2 = { path: '', tracks: [], streams: [], duration: 0 };
     state.v1StreamSelected = {};
     state.v2Selected = {};
     state.trackOverrides = {};
@@ -935,7 +935,8 @@ function prepareMerge(atempo, offset, v2Indices) {
     for (const tidx of v2Indices) {
         const key = `v2_${tidx}`;
         const ovr = state.trackOverrides[key] || {};
-        metadata.push({ language: ovr.language || '', title: ovr.title || '' });
+        const t = (state.v2.tracks || []).find(t => t.index === tidx) || {};
+        metadata.push({ language: ovr.language || t.language || 'und', title: ovr.title !== undefined ? ovr.title : (t.title || '') });
     }
     const params = { v1_path: v1, v2_path: v2, out_path: outPath, atempo, offset, v1_n_audio: nV1Audio, v1_stream_indices: v1StreamIndices, v2_indices: v2Indices, v1_duration: state.v1.duration, metadata };
     if (state.segments && state.segments.length > 1) {
@@ -987,15 +988,13 @@ function updateParams() {
 
 async function runMerge() {
     if (_runningTaskId) { alert('A task is already running. Stop it first.'); return; }
-    if (!state.mergeParams) {
-        const at = parseFloat(document.getElementById('atempo-input').value);
-        const off = parseFloat(document.getElementById('offset-input').value);
-        if (isNaN(at) || isNaN(off) || !state.v1.path || !state.v2.path) {
-            alert('Run Auto-Align first or enter valid values, and load both videos.');
-            return;
-        }
-        prepareMerge(at, off, getV2Indices());
+    const at = parseFloat(document.getElementById('atempo-input').value);
+    const off = parseFloat(document.getElementById('offset-input').value);
+    if (isNaN(at) || isNaN(off) || !state.v1.path || !state.v2.path) {
+        alert('Run Auto-Align first or enter valid values, and load both videos.');
+        return;
     }
+    prepareMerge(at, off, getV2Indices());
     if (!state.v1.path || !state.v2.path) { alert('Load both videos.'); return; }
     if (getV2Indices().length === 0) { alert('Select at least one V2 audio track.'); return; }
 
@@ -1036,17 +1035,35 @@ async function runMerge() {
     refreshSessionList();
 
     let lastMuxPct = -1;
+    let lastEncPct = -1;
+    let lastSubPct = -1;
     startPoll('merge', result.task_id,
         (task) => {
             if (_viewId !== myView) return;
             const progress = task.progress || '';
+            const encMatch = progress.match(/enc:(\d+)/);
             const muxMatch = progress.match(/mux:(\d+)/);
-            if (muxMatch) {
+            const subMatch = progress.match(/sub:(\d+)/);
+            if (encMatch) {
+                const pct = parseInt(encMatch[1]);
+                progressBar.querySelector('.fill').style.width = `${Math.floor(pct / 3)}%`;
+                if (pct !== lastEncPct) {
+                    lastEncPct = pct;
+                    log(`[Merge] Encoding audio... ${pct}%`);
+                }
+            } else if (muxMatch) {
                 const pct = parseInt(muxMatch[1]);
-                progressBar.querySelector('.fill').style.width = `${pct}%`;
+                progressBar.querySelector('.fill').style.width = `${33 + Math.floor(pct / 3)}%`;
                 if (pct !== lastMuxPct) {
                     lastMuxPct = pct;
-                    log(`[Merge] Writing output... ${pct}%`);
+                    log(`[Merge] Muxing output... ${pct}%`);
+                }
+            } else if (subMatch) {
+                const pct = parseInt(subMatch[1]);
+                progressBar.querySelector('.fill').style.width = `${66 + Math.floor(pct / 3)}%`;
+                if (pct !== lastSubPct) {
+                    lastSubPct = pct;
+                    log(`[Merge] Adding subtitles... ${pct}%`);
                 }
             } else {
                 log(`[Merge] ${progress.replace(/^status:/, '')}`);
@@ -1402,14 +1419,18 @@ async function switchToSession(sid, sess) {
     let lastMergeResult = null;
     let activeTask = null;
     let activeTaskType = null;
+    let lastAlignParams = null;
 
     for (const [tid, t] of Object.entries(sess.tasks || {})) {
         const p = t.params || {};
         if (p.v1_path) v1Path = p.v1_path;
         if (p.v2_path) v2Path = p.v2_path;
         if (p.out_path) outPath = p.out_path;
-        if (t.type === 'align' && t.status === 'done' && t.result) {
-            lastAlignResult = t.result;
+        if (t.type === 'align') {
+            lastAlignParams = p;
+            if (t.status === 'done' && t.result) {
+                lastAlignResult = t.result;
+            }
         }
         if (t.type === 'merge' && t.status === 'done' && t.result) {
             lastMergeResult = t.result;
@@ -1465,7 +1486,11 @@ async function switchToSession(sid, sess) {
     }
     if (savedMetadata && savedV1Indices) {
         let mi = 0;
-        for (const si of savedV1Indices) {
+        const v1AudioIndices = savedV1Indices.filter(si => {
+            const s = (state.v1.streams || []).find(s => s.stream_index === si);
+            return s && s.codec_type === 'audio';
+        });
+        for (const si of v1AudioIndices) {
             if (mi < savedMetadata.length) {
                 const key = `v1_s${si}`;
                 state.trackOverrides[key] = {
@@ -1492,6 +1517,17 @@ async function switchToSession(sid, sess) {
 
     if (outPath) {
         document.getElementById('out-path-input').value = outPath;
+    }
+
+    if (lastAlignParams) {
+        if (lastAlignParams.vocal_filter !== undefined)
+            document.getElementById('vocal-filter-cb').checked = !!lastAlignParams.vocal_filter;
+        if (lastAlignParams.fast_decode !== undefined)
+            document.getElementById('fast-decode-cb').checked = !!lastAlignParams.fast_decode;
+        if (lastAlignParams.v1_track !== undefined)
+            document.getElementById('v1-sync-track').value = lastAlignParams.v1_track;
+        if (lastAlignParams.v2_track !== undefined)
+            document.getElementById('v2-sync-track').value = lastAlignParams.v2_track;
     }
 
     if (lastAlignResult) {
@@ -1549,11 +1585,21 @@ async function switchToSession(sid, sess) {
                 (task) => {
                     if (_viewId !== myView) return;
                     const progress = task.progress || '';
+                    const encMatch = progress.match(/enc:(\d+)/);
                     const muxMatch = progress.match(/mux:(\d+)/);
-                    if (muxMatch) {
+                    const subMatch = progress.match(/sub:(\d+)/);
+                    if (encMatch) {
+                        const pct = parseInt(encMatch[1]);
+                        progressBar.querySelector('.fill').style.width = `${Math.floor(pct / 3)}%`;
+                        log(`[Merge] Encoding audio... ${pct}%`);
+                    } else if (muxMatch) {
                         const pct = parseInt(muxMatch[1]);
-                        progressBar.querySelector('.fill').style.width = `${pct}%`;
-                        log(`[Merge] Writing output... ${pct}%`);
+                        progressBar.querySelector('.fill').style.width = `${33 + Math.floor(pct / 3)}%`;
+                        log(`[Merge] Muxing output... ${pct}%`);
+                    } else if (subMatch) {
+                        const pct = parseInt(subMatch[1]);
+                        progressBar.querySelector('.fill').style.width = `${66 + Math.floor(pct / 3)}%`;
+                        log(`[Merge] Adding subtitles... ${pct}%`);
                     } else {
                         log(`[Merge] ${progress.replace(/^status:/, '')}`);
                     }
@@ -1586,7 +1632,8 @@ function renderSessionList(sessions) {
     newBtn.addEventListener('click', newSession);
     container.appendChild(newBtn);
 
-    for (const [sid, sess] of Object.entries(sessions)) {
+    const sorted = Object.entries(sessions).sort((a, b) => (a[1].created_at || 0) - (b[1].created_at || 0));
+    for (const [sid, sess] of sorted) {
         const div = document.createElement('div');
         div.className = 'session-item' + (_sessionId === sid ? ' active' : '');
 
