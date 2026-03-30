@@ -13,9 +13,7 @@ Useful when you have two recordings of the same content (e.g., different camera 
 - Speed detection across 7 candidates (23.976/25, 24/25, 1.0, 25/24, etc.)
 - Manual sync override (atempo and offset)
 - Multi-audio track selection and metadata editing
-- FFmpeg-based merge with progress tracking
-- Session management with auto-restore on page refresh
-- Server-side file browser and drag-and-drop upload
+- FFmpeg-based merge
 
 ## How It Works
 
