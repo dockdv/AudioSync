@@ -114,5 +114,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_PAT }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh workflow run dockerhub.yml
           gh workflow run docker-image.yml

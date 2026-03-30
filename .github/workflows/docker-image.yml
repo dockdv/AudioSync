@@ -6,7 +6,8 @@ on:
     types: [published]
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/audiosync
+  GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/audiosync
+  DOCKERHUB_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/audiosync
 
 jobs:
   build:
@@ -34,6 +35,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Log in to DockerHub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Generate tags
         id: tag
         env:
@@ -59,6 +66,9 @@ jobs:
           secrets: |
             ffmpeg_pat=${{ secrets.FFMPEG_PAT }}
           tags: |
-            ${{ env.IMAGE_NAME }}:latest
-            ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.date }}
-            ${{ steps.tag.outputs.release && format('{0}:{1}', env.IMAGE_NAME, steps.tag.outputs.release) || '' }}
+            ${{ env.GHCR_IMAGE }}:latest
+            ${{ env.GHCR_IMAGE }}:${{ steps.tag.outputs.date }}
+            ${{ steps.tag.outputs.release && format('{0}:{1}', env.GHCR_IMAGE, steps.tag.outputs.release) || '' }}
+            ${{ env.DOCKERHUB_IMAGE }}:latest
+            ${{ env.DOCKERHUB_IMAGE }}:${{ steps.tag.outputs.date }}
+            ${{ steps.tag.outputs.release && format('{0}:{1}', env.DOCKERHUB_IMAGE, steps.tag.outputs.release) || '' }}
