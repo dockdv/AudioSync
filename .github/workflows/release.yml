@@ -93,7 +93,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      actions: write
     steps:
       - uses: actions/download-artifact@v7
         with:
@@ -108,10 +107,3 @@ jobs:
             AudioSync.exe \
             --title "${{ github.event.inputs.version }}" \
             --generate-notes
-
-      - name: Trigger Docker workflows
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          gh workflow run docker-image.yml
