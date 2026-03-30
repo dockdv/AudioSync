@@ -139,6 +139,7 @@ body {
     border-bottom: 1px solid var(--border);
 }
 .panel-body { padding: 8px 10px; }
+.panel-disabled { opacity: 0.35; pointer-events: none; }
 
 button {
     background: var(--sf2);
@@ -352,7 +353,7 @@ input[type="checkbox"] { accent-color: var(--ac); }
             </div>
         </div>
 
-        <div class="panel">
+        <div class="panel panel-disabled" id="panel-align">
             <div class="panel-title">Auto Alignment</div>
             <div class="panel-body">
                 <div class="row">
@@ -380,7 +381,7 @@ input[type="checkbox"] { accent-color: var(--ac); }
             </div>
         </div>
 
-        <div class="panel">
+        <div class="panel panel-disabled" id="panel-override">
             <div class="panel-title">Manual Override / Output</div>
             <div class="panel-body">
                 <div class="row">
@@ -396,7 +397,7 @@ input[type="checkbox"] { accent-color: var(--ac); }
             </div>
         </div>
 
-        <div class="panel">
+        <div class="panel panel-disabled" id="panel-results">
             <div class="panel-title">Results</div>
             <div class="panel-body">
                 <div class="result-row"><span class="rlabel">Mode</span><span class="value" id="r-mode">-</span></div>
@@ -410,8 +411,16 @@ input[type="checkbox"] { accent-color: var(--ac); }
         </div>
 
         <div class="panel">
-            <div class="panel-title">Merge</div>
+            <div class="panel-title" id="merge-panel-title">Merge</div>
             <div class="panel-body">
+                <div class="row" style="gap:12px;margin-bottom:6px">
+                    <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
+                        <input type="radio" name="container-fmt" value="mkv" checked onchange="onContainerChange()"> .mkv
+                    </label>
+                    <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
+                        <input type="radio" name="container-fmt" value="keep" onchange="onContainerChange()"> Keep original
+                    </label>
+                </div>
                 <div class="row">
                     <button class="btn-green" id="merge-btn" onclick="runMerge()" style="flex:1">Run Merge</button>
                     <button class="btn-red hidden" id="merge-stop" onclick="cancelRunningTask()">Stop</button>
@@ -575,6 +584,7 @@ function resetUI() {
     }
     document.getElementById('align-progress').classList.remove('progress-indeterminate');
     document.getElementById('align-progress').querySelector('.fill').style.width = '0%';
+    document.querySelector('input[name="container-fmt"][value="mkv"]').checked = true;
     document.getElementById('atempo-input').value = '1.000000';
     document.getElementById('offset-input').value = '0.000';
     for (const k of ['r-mode','r-atempo','r-offset','r-inliers','r-fit','r-precision']) {
@@ -587,6 +597,8 @@ function resetUI() {
     document.getElementById('merge-progress').querySelector('.fill').style.width = '0%';
     document.getElementById('log-box').value = '';
     unlockButtons();
+    updateMergeButton();
+    updateSyncPanels();
 }
 
 function resetState() {
@@ -644,6 +656,8 @@ async function loadVideo(n) {
 
     fillTracks(n, result.tracks);
     updateSyncCombos();
+    updateMergeButton();
+    updateSyncPanels();
 }
 
 function streamLabel(s) {
@@ -919,7 +933,7 @@ function showAlignResults(r) {
 
 function prepareMerge(atempo, offset, v2Indices) {
     const v1 = state.v1.path, v2 = state.v2.path;
-    if (!v1 || !v2) return;
+    if (!v1) return;
     const outInput = document.getElementById('out-path-input').value.trim();
     const outPath = outInput || getDefaultOutputPath();
     const v1StreamIndices = getV1StreamIndices();
@@ -931,6 +945,12 @@ function prepareMerge(atempo, offset, v2Indices) {
         const key = `v1_s${s.stream_index}`;
         const ovr = state.trackOverrides[key] || {};
         metadata.push({ language: ovr.language || s.language || 'und', title: ovr.title !== undefined ? ovr.title : (s.title || '') });
+    }
+    if (isRemuxMode()) {
+        const params = { v1_path: v1, out_path: outPath, v1_stream_indices: v1StreamIndices, v1_duration: state.v1.duration, metadata };
+        state.mergeParams = params;
+        log(`[Remux] Ready \u2192 ${basename(outPath)}`);
+        return;
     }
     for (const tidx of v2Indices) {
         const key = `v2_${tidx}`;
@@ -970,6 +990,11 @@ function renderSegmentOverrides() {
 }
 
 function updateParams() {
+    if (isRemuxMode()) {
+        prepareMerge(1.0, 0, []);
+        log('[Remux] Parameters updated');
+        return;
+    }
     const at = parseFloat(document.getElementById('atempo-input').value);
     const off = parseFloat(document.getElementById('offset-input').value);
     if (isNaN(at) || isNaN(off)) { alert('Enter valid numbers.'); return; }
@@ -988,28 +1013,35 @@ function updateParams() {
 
 async function runMerge() {
     if (_runningTaskId) { alert('A task is already running. Stop it first.'); return; }
-    const at = parseFloat(document.getElementById('atempo-input').value);
-    const off = parseFloat(document.getElementById('offset-input').value);
-    if (isNaN(at) || isNaN(off) || !state.v1.path || !state.v2.path) {
-        alert('Run Auto-Align first or enter valid values, and load both videos.');
-        return;
+    const remux = isRemuxMode();
+
+    if (remux) {
+        if (!state.v1.path) { alert('Load Video 1 first.'); return; }
+        prepareMerge(1.0, 0, []);
+    } else {
+        const at = parseFloat(document.getElementById('atempo-input').value);
+        const off = parseFloat(document.getElementById('offset-input').value);
+        if (isNaN(at) || isNaN(off) || !state.v1.path || !state.v2.path) {
+            alert('Run Auto-Align first or enter valid values, and load both videos.');
+            return;
+        }
+        prepareMerge(at, off, getV2Indices());
+        if (getV2Indices().length === 0) { alert('Select at least one V2 audio track.'); return; }
     }
-    prepareMerge(at, off, getV2Indices());
-    if (!state.v1.path || !state.v2.path) { alert('Load both videos.'); return; }
-    if (getV2Indices().length === 0) { alert('Select at least one V2 audio track.'); return; }
 
     const currentOutPath = document.getElementById('out-path-input').value.trim() || getDefaultOutputPath();
     if (state.mergeParams) {
         state.mergeParams.out_path = currentOutPath;
     }
 
-    if (state.containerChange && !confirm(`Container '${state.containerExt}' doesn't support multi-audio.\nOutput will use .mkv.\n\nContinue?`)) return;
+    if (!remux && state.containerChange && !confirm(`Container '${state.containerExt}' doesn't support multi-audio.\nOutput will use .mkv.\n\nContinue?`)) return;
 
     const existsResult = await apiPost('/api/file-exists', { path: state.mergeParams.out_path });
     if (existsResult.exists) {
         if (!confirm(`Output file already exists:\n${basename(state.mergeParams.out_path)}\n\nOverwrite?`)) return;
     } else {
-        if (!confirm('Merge the audio tracks now?')) return;
+        const msg = remux ? 'Remux the file now?' : 'Merge the audio tracks now?';
+        if (!confirm(msg)) return;
     }
 
     await ensureSession();
@@ -1019,16 +1051,18 @@ async function runMerge() {
     lockButtons('merge');
     progressBar.querySelector('.fill').style.width = '0%';
     document.getElementById('log-box').value = '';
-    log('[Merge] Starting...');
+    const taskLabel = remux ? 'Remux' : 'Merge';
+    log(`[${taskLabel}] Starting...`);
 
     const body = { ...state.mergeParams };
-    const result = await apiPost(`/api/session/${_sessionId}/merge`, body);
+    const endpoint = remux ? 'remux' : 'merge';
+    const result = await apiPost(`/api/session/${_sessionId}/${endpoint}`, body);
 
     if (_viewId !== myView) return;
 
     if (result.error) {
         unlockButtons();
-        log(`[Merge] Error: ${result.error}`);
+        log(`[${taskLabel}] Error: ${result.error}`);
         return;
     }
 
@@ -1037,36 +1071,57 @@ async function runMerge() {
     let lastMuxPct = -1;
     let lastEncPct = -1;
     let lastSubPct = -1;
-    startPoll('merge', result.task_id,
+    startPoll(remux ? 'remux' : 'merge', result.task_id,
         (task) => {
             if (_viewId !== myView) return;
             const progress = task.progress || '';
-            const encMatch = progress.match(/enc:(\d+)/);
             const muxMatch = progress.match(/mux:(\d+)/);
-            const subMatch = progress.match(/sub:(\d+)/);
-            if (encMatch) {
-                const pct = parseInt(encMatch[1]);
-                progressBar.querySelector('.fill').style.width = `${Math.floor(pct / 3)}%`;
-                if (pct !== lastEncPct) {
-                    lastEncPct = pct;
-                    log(`[Merge] Encoding audio... ${pct}%`);
-                }
-            } else if (muxMatch) {
-                const pct = parseInt(muxMatch[1]);
-                progressBar.querySelector('.fill').style.width = `${33 + Math.floor(pct / 3)}%`;
-                if (pct !== lastMuxPct) {
-                    lastMuxPct = pct;
-                    log(`[Merge] Muxing output... ${pct}%`);
-                }
-            } else if (subMatch) {
-                const pct = parseInt(subMatch[1]);
-                progressBar.querySelector('.fill').style.width = `${66 + Math.floor(pct / 3)}%`;
-                if (pct !== lastSubPct) {
-                    lastSubPct = pct;
-                    log(`[Merge] Adding subtitles... ${pct}%`);
+            if (remux) {
+                const subMatch = progress.match(/sub:(\d+)/);
+                if (muxMatch) {
+                    const pct = parseInt(muxMatch[1]);
+                    progressBar.querySelector('.fill').style.width = `${Math.floor(pct / 2)}%`;
+                    if (pct !== lastMuxPct) {
+                        lastMuxPct = pct;
+                        log(`[Remux] Muxing video + audio... ${pct}%`);
+                    }
+                } else if (subMatch) {
+                    const pct = parseInt(subMatch[1]);
+                    progressBar.querySelector('.fill').style.width = `${50 + Math.floor(pct / 2)}%`;
+                    if (pct !== lastSubPct) {
+                        lastSubPct = pct;
+                        log(`[Remux] Adding subtitles... ${pct}%`);
+                    }
+                } else {
+                    log(`[Remux] ${progress.replace(/^status:/, '')}`);
                 }
             } else {
-                log(`[Merge] ${progress.replace(/^status:/, '')}`);
+                const encMatch = progress.match(/enc:(\d+)/);
+                const subMatch = progress.match(/sub:(\d+)/);
+                if (encMatch) {
+                    const pct = parseInt(encMatch[1]);
+                    progressBar.querySelector('.fill').style.width = `${Math.floor(pct / 3)}%`;
+                    if (pct !== lastEncPct) {
+                        lastEncPct = pct;
+                        log(`[Merge] Encoding audio... ${pct}%`);
+                    }
+                } else if (muxMatch) {
+                    const pct = parseInt(muxMatch[1]);
+                    progressBar.querySelector('.fill').style.width = `${33 + Math.floor(pct / 3)}%`;
+                    if (pct !== lastMuxPct) {
+                        lastMuxPct = pct;
+                        log(`[Merge] Muxing output... ${pct}%`);
+                    }
+                } else if (subMatch) {
+                    const pct = parseInt(subMatch[1]);
+                    progressBar.querySelector('.fill').style.width = `${66 + Math.floor(pct / 3)}%`;
+                    if (pct !== lastSubPct) {
+                        lastSubPct = pct;
+                        log(`[Merge] Adding subtitles... ${pct}%`);
+                    }
+                } else {
+                    log(`[Merge] ${progress.replace(/^status:/, '')}`);
+                }
             }
         },
         (task) => {
@@ -1074,11 +1129,11 @@ async function runMerge() {
             unlockButtons();
             if (task.status === 'done') {
                 progressBar.querySelector('.fill').style.width = '100%';
-                log(`[Merge] Completed in ${task.result.elapsed} \u2192 ${task.result.output}`);
+                log(`[${taskLabel}] Completed in ${task.result.elapsed} \u2192 ${task.result.output}`);
                 alert('Output file created!\n' + task.result.output);
             } else {
                 progressBar.querySelector('.fill').style.width = '0%';
-                log(`[Merge] ${task.status}: ${task.error || ''}`);
+                log(`[${taskLabel}] ${task.status}: ${task.error || ''}`);
             }
             refreshSessionList();
         }
@@ -1252,14 +1307,43 @@ async function browseOutputDir() {
     navigateTo(existingPath);
 }
 
+function isRemuxMode() {
+    return !state.v2.path;
+}
+
 function getDefaultOutputPath() {
     const v1 = state.v1.path;
     if (!v1) return '';
     const dotIdx = v1.lastIndexOf('.');
     const base = dotIdx > 0 ? v1.substring(0, dotIdx) : v1;
-    const ext = dotIdx > 0 ? v1.substring(dotIdx) : '';
-    const outExt = state.containerChange ? '.mkv' : ext;
-    return `${base}_merged${outExt}`;
+    const origExt = dotIdx > 0 ? v1.substring(dotIdx) : '';
+    const container = document.querySelector('input[name="container-fmt"]:checked').value;
+    const outExt = container === 'mkv' ? '.mkv' : origExt;
+    const suffix = isRemuxMode() ? '_remuxed' : '_merged';
+    return `${base}${suffix}${outExt}`;
+}
+
+function onContainerChange() {
+    updateOutputPathIfDefault();
+}
+
+function updateSyncPanels() {
+    const bothLoaded = !!(state.v1.path && state.v2.path);
+    for (const id of ['panel-align', 'panel-override', 'panel-results']) {
+        document.getElementById(id).classList.toggle('panel-disabled', !bothLoaded);
+    }
+}
+
+function updateMergeButton() {
+    const btn = document.getElementById('merge-btn');
+    const title = document.getElementById('merge-panel-title');
+    if (isRemuxMode()) {
+        btn.textContent = 'Run Remux';
+        title.textContent = 'Remux';
+    } else {
+        btn.textContent = 'Run Merge';
+        title.textContent = 'Merge';
+    }
 }
 
 function updateOutputPathIfDefault() {

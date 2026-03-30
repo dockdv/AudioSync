@@ -1107,6 +1107,103 @@ def _run_ffmpeg(cmd, v1_dur, progress_cb, cancel, progress_prefix="mux"):
         raise
 
 
+def remux_with_ffmpeg(v1_path, out_path,
+                      v1_stream_indices=None,
+                      v1_duration=0,
+                      ffmpeg_path=None, metadata_args=None,
+                      progress_cb=None, cancel=None):
+    if not ffmpeg_path:
+        ffmpeg_path = find_ffmpeg_binary()
+    if not ffmpeg_path:
+        raise RuntimeError("ffmpeg binary not found")
+
+    out_dir = os.path.dirname(out_path)
+    if out_dir and not os.path.isdir(out_dir):
+        raise RuntimeError(f"Output directory does not exist: {out_dir}")
+
+    v1_dur = v1_duration or get_duration(v1_path)
+
+    v1_info = fflib.probe(v1_path)
+    v1_stream_types = {s["stream_index"]: s["codec_type"]
+                       for s in v1_info.get("streams", [])}
+
+    if v1_stream_indices is not None:
+        selected = v1_stream_indices
+    else:
+        selected = sorted(v1_stream_types.keys())
+
+    v1_sub = [si for si in selected if v1_stream_types.get(si) == "subtitle"]
+    non_sub = [si for si in selected if v1_stream_types.get(si) != "subtitle"]
+    has_subs = len(v1_sub) > 0
+
+    base, ext = os.path.splitext(out_path)
+    tmp_nosubs = base + ".tmp_nosubs.mkv"
+
+    try:
+        # Pass 1: mux everything except subtitles
+        mux_target = tmp_nosubs if has_subs else out_path
+        if progress_cb:
+            progress_cb("status", "Pass 1: muxing video + audio...")
+
+        cmd = [ffmpeg_path, "-y", "-hide_banner"]
+        cmd += ["-i", v1_path]
+
+        for si in non_sub:
+            cmd += ["-map", f"0:{si}"]
+
+        cmd += ["-c", "copy"]
+
+        if metadata_args:
+            audio_idx = 0
+            for si in non_sub:
+                if v1_stream_types.get(si) == "audio" and audio_idx < len(metadata_args):
+                    meta = metadata_args[audio_idx]
+                    lang = meta.get("language") or ""
+                    title = meta.get("title") or ""
+                    cmd += [f"-metadata:s:a:{audio_idx}", f"language={lang}"]
+                    cmd += [f"-metadata:s:a:{audio_idx}", f"title={title}"]
+                    audio_idx += 1
+
+        if v1_dur > 0:
+            cmd += ["-t", f"{v1_dur:.6f}"]
+
+        cmd += [mux_target]
+
+        _run_ffmpeg(cmd, v1_dur, progress_cb, cancel, progress_prefix="mux")
+
+        # Pass 2: add subtitles separately (PGS subs cause interleaving issues)
+        if has_subs:
+            if progress_cb:
+                progress_cb("status", "Pass 2: adding subtitles...")
+
+            cmd = [ffmpeg_path, "-y", "-hide_banner"]
+            cmd += ["-i", tmp_nosubs]
+            cmd += ["-i", v1_path]
+
+            cmd += ["-map", "0"]
+            for si in v1_sub:
+                cmd += ["-map", f"1:{si}"]
+
+            cmd += ["-c", "copy"]
+
+            if v1_dur > 0:
+                cmd += ["-t", f"{v1_dur:.6f}"]
+
+            cmd += [out_path]
+
+            _run_ffmpeg(cmd, v1_dur, progress_cb, cancel, progress_prefix="sub")
+    finally:
+        if os.path.isfile(tmp_nosubs):
+            try:
+                os.remove(tmp_nosubs)
+            except OSError:
+                pass
+
+    if progress_cb:
+        progress_cb("progress", "mux:100")
+        progress_cb("status", "Done!")
+
+
 def merge_with_ffmpeg(v1_path, v2_path, out_path, atempo, offset,
                       v1_n_audio, v2_indices, v1_duration,
                       segments=None,

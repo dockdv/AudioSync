@@ -15,7 +15,7 @@ from sync_engine import (
     format_timestamp,
     CancellableTask, CancelledError,
     auto_align_audio,
-    find_ffmpeg_binary, merge_with_ffmpeg,
+    find_ffmpeg_binary, merge_with_ffmpeg, remux_with_ffmpeg,
 )
 from _version import __version__
 
@@ -95,6 +95,8 @@ def _start_task(sid, task_type, params):
             b1 = os.path.basename(v1)
             b2 = os.path.basename(v2)
             sess["label"] = f"{b1} \u2194 {b2}"
+        elif v1:
+            sess["label"] = f"{os.path.basename(v1)} (remux)"
     return tid, cancel, None
 
 
@@ -364,6 +366,67 @@ def api_merge(sid):
                 v1_duration=v1_duration,
                 segments=segments,
                 v1_stream_indices=v1_stream_indices,
+                metadata_args=metadata,
+                progress_cb=progress_cb, cancel=cancel,
+            )
+            elapsed = time.monotonic() - t0
+            mins, secs = divmod(int(elapsed), 60)
+            _update_task(sid, tid, status="done",
+                         result={"elapsed": f"{mins}m {secs}s",
+                                 "output": out})
+        except CancelledError:
+            _update_task(sid, tid, status="cancelled", error="Cancelled")
+        except Exception as e:
+            _update_task(sid, tid, status="error", error=str(e))
+        finally:
+            with _sessions_lock:
+                sess = _sessions.get(sid)
+                if sess and tid in sess["tasks"]:
+                    t = sess["tasks"][tid]
+                    if t["status"] == "running":
+                        t["status"] = "error"
+                        t["error"] = "Task died unexpectedly"
+                        t["finished_at"] = time.monotonic()
+                        if sess["active_task"] == tid:
+                            sess["active_task"] = None
+
+    threading.Thread(target=go, daemon=True).start()
+    return jsonify({"task_id": tid})
+
+
+@app.route("/api/session/<sid>/remux", methods=["POST"])
+def api_remux(sid):
+    data = request.get_json() or {}
+    v1 = data.get("v1_path", "")
+    out = data.get("out_path", "")
+    v1_stream_indices = data.get("v1_stream_indices", None)
+    v1_duration = data.get("v1_duration", 0)
+    metadata = data.get("metadata", [])
+
+    if not v1 or not os.path.isfile(v1):
+        return jsonify({"error": f"V1 not found: {v1}"}), 400
+    if not out:
+        return jsonify({"error": "Output path is required"}), 400
+
+    tid, cancel, err = _start_task(sid, "remux", {
+        "v1_path": v1, "out_path": out,
+        "v1_stream_indices": v1_stream_indices,
+        "v1_duration": v1_duration, "metadata": metadata,
+    })
+    if err:
+        return jsonify({"error": err}), 409
+
+    def go():
+        t0 = time.monotonic()
+
+        def progress_cb(kind, msg):
+            _update_task(sid, tid, progress=f"{kind}:{msg}")
+
+        try:
+            remux_with_ffmpeg(
+                v1_path=v1, out_path=out,
+                v1_stream_indices=v1_stream_indices,
+                v1_duration=v1_duration,
                 metadata_args=metadata,
                 progress_cb=progress_cb, cancel=cancel,
             )
