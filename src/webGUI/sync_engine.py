@@ -979,6 +979,8 @@ def _build_piecewise_filter(atempo, segments, v1_sr, v1_dur,
 
     lines = []
     seg_labels = []
+    prev_v2_end = None
+    next_input = input_base
 
     for i, seg in enumerate(segments):
         off = seg["offset"]
@@ -989,33 +991,68 @@ def _build_piecewise_filter(atempo, segments, v1_sr, v1_dur,
 
         trim_start_pre = max(0.0, (v1_s - off) * atempo)
         trim_end_pre = max(trim_start_pre + 0.001, (v1_e - off) * atempo)
-
-        input_idx = input_base + i
-        in_label = f"{input_idx}:a:{v2_track}"
-
-        parts = [f"[{in_label}]atrim=start={trim_start_pre:.6f}:end={trim_end_pre:.6f}"]
-        parts.append("asetpts=PTS-STARTPTS")
-        if base_filters:
-            parts.append(base_filters)
-
         seg_dur = v1_e - v1_s
-        needed_delay = max(0.0, off - v1_s)
 
-        if needed_delay > 0.01:
-            delay_ms = int(round(needed_delay * 1000))
-            parts.append(f"adelay={delay_ms}:all=1")
+        gap_v1 = 0.0
+        if prev_v2_end is not None and trim_start_pre < prev_v2_end:
+            gap_v1 = max(0.0, prev_v2_end / atempo + off - v1_s)
+            gap_v1 = min(gap_v1, seg_dur)
+            trim_start_pre = prev_v2_end
+            trim_end_pre = max(trim_start_pre + 0.001, trim_end_pre)
 
-        parts.append(f"apad=whole_dur={seg_dur:.6f}")
-
+        prev_v2_end = trim_end_pre
         out_label = f"[_seg{i}]"
         seg_labels.append(out_label)
-        lines.append(",".join(parts) + out_label)
+
+        if gap_v1 > 0.01:
+            gap_v2 = gap_v1 * atempo
+            gap_idx = next_input
+            next_input += 1
+            gap_in = f"{gap_idx}:a:{v2_track}"
+            gap_lbl = f"[_gap{i}]"
+            gf = [f"[{gap_in}]atrim=end={gap_v2:.6f}",
+                  "asetpts=PTS-STARTPTS", "volume=0"]
+            if base_filters:
+                gf.append(base_filters)
+            lines.append(",".join(gf) + gap_lbl)
+
+            aud_idx = next_input
+            next_input += 1
+            aud_in = f"{aud_idx}:a:{v2_track}"
+            aud_lbl = f"[_aud{i}]"
+            af = [f"[{aud_in}]atrim=start={trim_start_pre:.6f}:end={trim_end_pre:.6f}",
+                  "asetpts=PTS-STARTPTS"]
+            if base_filters:
+                af.append(base_filters)
+            lines.append(",".join(af) + aud_lbl)
+
+            lines.append(
+                f"{gap_lbl}{aud_lbl}concat=n=2:v=0:a=1,"
+                f"apad=whole_dur={seg_dur:.6f}{out_label}")
+        else:
+            input_idx = next_input
+            next_input += 1
+            in_label = f"{input_idx}:a:{v2_track}"
+
+            parts = [f"[{in_label}]atrim=start={trim_start_pre:.6f}:end={trim_end_pre:.6f}"]
+            parts.append("asetpts=PTS-STARTPTS")
+            if base_filters:
+                parts.append(base_filters)
+
+            needed_delay = max(0.0, off - v1_s)
+            needed_delay = min(needed_delay, seg_dur)
+            if needed_delay > 0.01:
+                delay_ms = int(round(needed_delay * 1000))
+                parts.append(f"adelay={delay_ms}:all=1")
+
+            parts.append(f"apad=whole_dur={seg_dur:.6f}")
+            lines.append(",".join(parts) + out_label)
 
     output_label = "[_v2out]"
     seg_in = "".join(seg_labels)
     lines.append(f"{seg_in}concat=n={n}:v=0:a=1{output_label}")
 
-    return "; ".join(lines), output_label, n
+    return "; ".join(lines), output_label, next_input - input_base
 
 
 def merge_with_ffmpeg(v1_path, v2_path, out_path, atempo, offset,
@@ -1039,8 +1076,21 @@ def merge_with_ffmpeg(v1_path, v2_path, out_path, atempo, offset,
     cmd += ["-i", v1_path]
 
     if use_piecewise:
-        n_v2_inputs = n_segments * len(v2_indices)
-        for _ in range(n_v2_inputs):
+        fc_parts = []
+        output_labels = []
+        running_base = 1
+        for i, tidx in enumerate(v2_indices):
+            fg, out_label, n_inputs = _build_piecewise_filter(
+                atempo, segments, v1_sr, v1_dur,
+                v2_track=tidx, input_base=running_base)
+            if len(v2_indices) > 1:
+                fg = fg.replace("[_", f"[_t{i}_")
+                out_label = out_label.replace("[_", f"[_t{i}_")
+            fc_parts.append(fg)
+            output_labels.append(out_label)
+            running_base += n_inputs
+
+        for _ in range(running_base - 1):
             cmd += ["-i", v2_path]
     else:
         cmd += ["-i", v2_path]
@@ -1053,19 +1103,6 @@ def merge_with_ffmpeg(v1_path, v2_path, out_path, atempo, offset,
 
     if use_piecewise:
         cmd += ["-c", "copy"]
-
-        fc_parts = []
-        output_labels = []
-        for i, tidx in enumerate(v2_indices):
-            input_base = 1 + i * n_segments
-            fg, out_label, _ = _build_piecewise_filter(
-                atempo, segments, v1_sr, v1_dur,
-                v2_track=tidx, input_base=input_base)
-            if len(v2_indices) > 1:
-                fg = fg.replace("[_", f"[_t{i}_")
-                out_label = out_label.replace("[_", f"[_t{i}_")
-            fc_parts.append(fg)
-            output_labels.append(out_label)
 
         cmd += ["-filter_complex", "; ".join(fc_parts)]
 
