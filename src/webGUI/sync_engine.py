@@ -4,6 +4,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import fflib
+from fflib import CancelledError
 from probe import get_duration
 
 AUDIO_SAMPLE_RATE = 8000
@@ -60,9 +61,6 @@ class CancellableTask:
             raise CancelledError("Cancelled")
 
 
-class CancelledError(Exception):
-    pass
-
 
 def extract_audio_fingerprints(filepath, track_index=0,
                                 max_samples=AUDIO_MAX_SAMPLES,
@@ -92,6 +90,10 @@ def extract_audio_fingerprints(filepath, track_index=0,
     ).astype(int)
     band_edges = np.clip(band_edges, 0, n_fft_bins - 1)
 
+    safe_edges = band_edges.copy()
+    safe_edges[1:] = np.maximum(safe_edges[1:], safe_edges[:-1] + 1)
+    band_widths = np.diff(safe_edges).astype(np.float32)
+
     if audio_data is not None:
         audio = audio_data
     else:
@@ -113,11 +115,8 @@ def extract_audio_fingerprints(filepath, track_index=0,
             cancel.check()
         frame = audio[pos:pos + window_samples] * hann
         spectrum = np.abs(np.fft.rfft(frame))
-        fp = np.zeros(n_bands, dtype=np.float32)
-        for b in range(n_bands):
-            lo = band_edges[b]
-            hi = max(lo + 1, band_edges[b + 1])
-            fp[b] = np.log1p(np.mean(spectrum[lo:hi]))
+        band_sums = np.add.reduceat(spectrum, safe_edges[:-1])
+        fp = np.log1p(band_sums / band_widths).astype(np.float32)
         norm = np.linalg.norm(fp)
         if norm > 0:
             fp /= norm
@@ -140,7 +139,8 @@ def _decode_full_audio(filepath, track_index, sr, cancel=None,
                        vocal_filter=False, fast_decode=False):
     audio = fflib.decode_audio(filepath, track_index, sr,
                                vocal_filter=vocal_filter,
-                               fast_decode=fast_decode)
+                               fast_decode=fast_decode,
+                               cancel=cancel)
     if len(audio) == 0:
         raise RuntimeError("No audio data decoded")
     return audio
@@ -210,10 +210,10 @@ def extract_band_peak_fingerprints(filepath, track_index=0,
             peak_mags = peak_mags[top_idx]
 
         fp = np.zeros(n_bands, dtype=np.float32)
-        for pi, pm in zip(peak_indices, peak_mags):
-            band = np.searchsorted(band_edges[1:], pi)
-            if band < n_bands:
-                fp[band] = max(fp[band], np.log1p(pm))
+        if len(peak_indices) > 0:
+            bands = np.searchsorted(band_edges[1:], peak_indices)
+            valid = bands < n_bands
+            np.maximum.at(fp, bands[valid], np.log1p(peak_mags[valid]))
 
         norm = np.linalg.norm(fp)
         if norm > 0:
@@ -236,15 +236,19 @@ def extract_band_peak_fingerprints(filepath, track_index=0,
 
 def match_fingerprints(fp1, fp2, top_k=AUDIO_MATCH_TOP_K):
     sim = fp1 @ fp2.T
-    matches = []
-    for i in range(len(fp1)):
-        if sim.shape[1] <= top_k:
-            best = np.argsort(sim[i])[::-1]
-        else:
-            idx = np.argpartition(sim[i], -top_k)[-top_k:]
-            best = idx[np.argsort(sim[i][idx])[::-1]]
-        for j in best:
-            matches.append((i, int(j), float(sim[i][j])))
+    n1, n2 = sim.shape
+    if n2 <= top_k:
+        top_indices = np.argsort(sim, axis=1)[:, ::-1]
+    else:
+        raw = np.argpartition(sim, -top_k, axis=1)[:, -top_k:]
+        row_idx = np.arange(n1)[:, None]
+        order = np.argsort(sim[row_idx, raw], axis=1)[:, ::-1]
+        top_indices = raw[row_idx, order]
+    k = top_indices.shape[1]
+    i_arr = np.repeat(np.arange(n1), k)
+    j_arr = top_indices.ravel()
+    s_arr = sim[i_arr, j_arr]
+    matches = list(zip(i_arr.tolist(), j_arr.tolist(), s_arr.tolist()))
     return matches
 
 
@@ -345,10 +349,29 @@ def _residual_stats(pairs, a, b):
 
 
 SPEED_SNAP_TOLERANCE = 0.005
-def _xcorr_on_downsampled(d1, d2, effective_rate, speed_candidates):
+def _find_xcorr_peaks(xcorr, nfft, effective_rate, n_peaks=3, min_sep_sec=5.0):
+    min_sep = int(min_sep_sec * effective_rate)
+    peaks = []
+    xcorr_copy = xcorr.copy()
+    for _ in range(n_peaks):
+        pi = int(np.argmax(xcorr_copy))
+        pv = float(xcorr_copy[pi])
+        if pv <= 0:
+            break
+        lag = pi if pi <= nfft // 2 else pi - nfft
+        peaks.append((pv, float(lag / effective_rate)))
+        lo = max(0, pi - min_sep)
+        hi = min(len(xcorr_copy), pi + min_sep + 1)
+        xcorr_copy[lo:hi] = 0
+    return peaks
+
+
+def _xcorr_on_downsampled(d1, d2, effective_rate, speed_candidates,
+                          return_alt_offsets=False):
     best_corr = -np.inf
     best_offset = 0.0
     best_speed = 1.0
+    all_peaks = [] if return_alt_offsets else None
 
     d1n = d1 - np.mean(d1)
     s1 = np.std(d1n)
@@ -386,12 +409,23 @@ def _xcorr_on_downsampled(d1, d2, effective_rate, speed_candidates):
             best_offset = float(pi / effective_rate)
             best_speed = speed
 
+        if return_alt_offsets:
+            peaks = _find_xcorr_peaks(xcorr, nfft, effective_rate)
+            for peak_v, peak_off in peaks:
+                norm_pv = peak_v / overlap if overlap > 0 else 0.0
+                all_peaks.append((norm_pv, peak_off, speed))
+
+    if return_alt_offsets:
+        all_peaks.sort(key=lambda x: x[0], reverse=True)
+        alt = [(off, spd, corr) for corr, off, spd in all_peaks
+               if abs(off - best_offset) > 5.0 or abs(spd - best_speed) > 0.001]
+        return best_offset, best_speed, best_corr, alt
     return best_offset, best_speed, best_corr
 
 
 def detect_segments(inlier_pairs, a, coarse_offset=0.0,
                     d1=None, d2=None, effective_rate=100.0,
-                    min_segment_sec=300):
+                    min_segment_sec=300, alt_offsets=None):
     primary_offset = coarse_offset
 
     primary_seg = {
@@ -429,7 +463,13 @@ def detect_segments(inlier_pairs, a, coarse_offset=0.0,
 
     off_half = _xcorr_at_split(v1_dur * 0.6)
     if off_half is None or abs(off_half - primary_offset) < 10:
-        return [primary_seg]
+        if alt_offsets:
+            for alt_off, alt_spd, alt_corr in alt_offsets:
+                if abs(alt_off - primary_offset) >= 10:
+                    off_half = alt_off
+                    break
+        if off_half is None or abs(off_half - primary_offset) < 10:
+            return [primary_seg]
 
     second_offset = off_half
 
@@ -632,8 +672,8 @@ def auto_align_audio(fp1, fp2, track1=0, track2=0,
     else:
         ds1_seg, ds2_seg = ds1, ds2
 
-    coarse_offset, xcorr_speed, xcorr_corr = _xcorr_on_downsampled(
-        ds1, ds2, ds_rate, SPEED_CANDIDATES)
+    coarse_offset, xcorr_speed, xcorr_corr, alt_offsets = _xcorr_on_downsampled(
+        ds1, ds2, ds_rate, SPEED_CANDIDATES, return_alt_offsets=True)
 
     if cancel:
         cancel.check()
@@ -753,7 +793,8 @@ def auto_align_audio(fp1, fp2, track1=0, track2=0,
     segments = detect_segments(pairs, xcorr_speed,
                                coarse_offset=coarse_offset,
                                d1=ds1_seg, d2=ds2_seg,
-                               effective_rate=ds_rate)
+                               effective_rate=ds_rate,
+                               alt_offsets=alt_offsets)
 
     if segments and len(segments) > 1:
         segments = refine_boundary_visual(

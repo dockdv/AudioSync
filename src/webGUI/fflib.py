@@ -4,6 +4,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import threading
 
 import numpy as np
 
@@ -54,13 +55,69 @@ if sys.platform == "win32":
     _creationflags = subprocess.CREATE_NO_WINDOW
 
 
-def _run(cmd, check=True, timeout=30):
-    r = subprocess.run(cmd, capture_output=True, timeout=timeout,
-                       creationflags=_creationflags)
-    if check and r.returncode != 0:
-        stderr = r.stderr.decode("utf-8", errors="replace").strip()
-        raise RuntimeError(f"{cmd[0]} failed (code {r.returncode}): {stderr}")
-    return r.stdout
+class CancelledError(Exception):
+    pass
+
+
+def _run(cmd, check=True, timeout=30, cancel=None):
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            creationflags=_creationflags)
+    stdout_buf = []
+    stderr_buf = []
+
+    def _reader(pipe, buf):
+        try:
+            while True:
+                chunk = pipe.read(65536)
+                if not chunk:
+                    break
+                buf.append(chunk)
+        except Exception:
+            pass
+
+    t_out = threading.Thread(target=_reader, args=(proc.stdout, stdout_buf),
+                             daemon=True)
+    t_err = threading.Thread(target=_reader, args=(proc.stderr, stderr_buf),
+                             daemon=True)
+    t_out.start()
+    t_err.start()
+
+    try:
+        elapsed = 0.0
+        while True:
+            if cancel and cancel.is_cancelled:
+                proc.kill()
+                proc.wait(timeout=5)
+                raise CancelledError("Cancelled")
+            try:
+                proc.wait(timeout=0.5)
+                break
+            except subprocess.TimeoutExpired:
+                elapsed += 0.5
+                if timeout is not None and elapsed >= timeout:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+    except (CancelledError, subprocess.TimeoutExpired):
+        t_out.join(timeout=2)
+        t_err.join(timeout=2)
+        raise
+    except Exception:
+        proc.kill()
+        proc.wait(timeout=5)
+        t_out.join(timeout=2)
+        t_err.join(timeout=2)
+        raise
+
+    t_out.join()
+    t_err.join()
+    stdout = b"".join(stdout_buf)
+    stderr = b"".join(stderr_buf)
+
+    if check and proc.returncode != 0:
+        stderr_str = stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"{cmd[0]} failed (code {proc.returncode}): {stderr_str}")
+    return stdout
 
 
 def _require_ffprobe():
@@ -150,7 +207,7 @@ def get_sample_rate(handle, audio_track_index):
 
 
 def decode_audio(handle, audio_track_index, target_sr, vocal_filter=False,
-                 fast_decode=False):
+                 fast_decode=False, cancel=None):
     ff = _require_ffmpeg()
     cmd = [ff, "-v", "quiet",
            "-i", handle,
@@ -170,7 +227,7 @@ def decode_audio(handle, audio_track_index, target_sr, vocal_filter=False,
             "-f", "f32le",
             "-acodec", "pcm_f32le",
             "pipe:1"]
-    raw = _run(cmd, timeout=3600)
+    raw = _run(cmd, timeout=3600, cancel=cancel)
     if len(raw) == 0:
         return np.array([], dtype=np.float32)
     return np.frombuffer(raw, dtype=np.float32).copy()
