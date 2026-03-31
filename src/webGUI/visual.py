@@ -109,7 +109,7 @@ def verify_offset_visual(v1_path, v2_path, coarse_offset, xcorr_speed,
                         f"{best_off:.2f}, speed {xcorr_speed:.4f} -> "
                         f"{best_spd:.4f} (score {xcorr_score:.2f} -> "
                         f"{best_score:.2f})")
-        return {"offset": best_off, "speed": best_spd}
+        return {"offset": best_off, "speed": best_spd, "score": best_score, "audio_score": xcorr_score}
 
     return None
 

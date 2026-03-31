@@ -64,6 +64,10 @@ def _new_session():
             "label": "New session",
             "tasks": {},
             "active_task": None,
+            "ui_state": {},
+            "version": 0,
+            "log_version": 0,
+            "logs": [],
         }
     return sid
 
@@ -91,6 +95,7 @@ def _start_task(sid, task_type, params):
         }
         sess["active_task"] = tid
         sess["updated_at"] = time.monotonic()
+        sess["version"] = sess.get("version", 0) + 1
         v1 = params.get("v1_path", "")
         v2 = params.get("v2_path", "")
         if v1 and v2:
@@ -112,6 +117,13 @@ def _update_task(sid, tid, **kwargs):
                 sess["tasks"][tid]["finished_at"] = time.monotonic()
                 if sess["active_task"] == tid:
                     sess["active_task"] = None
+                sess["version"] = sess.get("version", 0) + 1
+            if "progress" in kwargs:
+                sess["log_version"] = sess.get("log_version", 0) + 1
+                sess.setdefault("logs", []).append({
+                    "msg": kwargs["progress"],
+                    "lv": sess["log_version"],
+                })
 
 
 def _get_task(sid, tid):
@@ -133,6 +145,9 @@ def _serialize_session(sess):
         "active_task": sess["active_task"],
         "tasks": tasks,
         "created_at": sess["created_at"],
+        "ui_state": sess.get("ui_state", {}),
+        "version": sess.get("version", 0),
+        "log_version": sess.get("log_version", 0),
     }
 
 
@@ -245,6 +260,52 @@ def api_session_get(sid):
         sess["updated_at"] = time.monotonic()
         data = _serialize_session(sess)
     return jsonify(data)
+
+
+@app.route("/api/session/<sid>/state", methods=["PATCH"])
+def api_session_state(sid):
+    data = request.get_json() or {}
+    with _sessions_lock:
+        sess = _sessions.get(sid)
+        if not sess:
+            return jsonify({"error": "Session not found"}), 404
+        sess.setdefault("ui_state", {}).update(data)
+        sess["updated_at"] = time.monotonic()
+        sess["version"] = sess.get("version", 0) + 1
+        v1 = data.get("v1_path", "")
+        v2 = data.get("v2_path", "")
+        if v1 and v2:
+            sess["label"] = f"{os.path.basename(v1)} \u2194 {os.path.basename(v2)}"
+        elif v1:
+            sess["label"] = os.path.basename(v1)
+        ver = sess["version"]
+        label = sess["label"]
+    return jsonify({"ok": True, "version": ver, "label": label})
+
+
+@app.route("/api/session/<sid>/version")
+def api_session_version(sid):
+    with _sessions_lock:
+        sess = _sessions.get(sid)
+        if not sess:
+            return jsonify({"error": "Session not found"}), 404
+    return jsonify({
+        "version": sess.get("version", 0),
+        "log_version": sess.get("log_version", 0),
+    })
+
+
+@app.route("/api/session/<sid>/logs")
+def api_session_logs(sid):
+    since = request.args.get("since", 0, type=int)
+    with _sessions_lock:
+        sess = _sessions.get(sid)
+        if not sess:
+            return jsonify({"error": "Session not found"}), 404
+        logs = sess.get("logs", [])
+        entries = [e for e in logs if e["lv"] > since]
+        lv = sess.get("log_version", 0)
+    return jsonify({"log_version": lv, "entries": entries})
 
 
 @app.route("/api/session/<sid>/align", methods=["POST"])
@@ -475,6 +536,19 @@ def api_task_status(sid, tid):
     if not t:
         return jsonify({"error": "Task not found"}), 404
     return jsonify(t)
+
+
+@app.route("/api/session/<sid>", methods=["DELETE"])
+def api_session_delete(sid):
+    with _sessions_lock:
+        sess = _sessions.get(sid)
+        if not sess:
+            return jsonify({"error": "Session not found"}), 404
+        for tid, t in sess["tasks"].items():
+            if t.get("status") == "running" and t.get("cancel"):
+                t["cancel"].cancel()
+        del _sessions[sid]
+    return jsonify({"ok": True})
 
 
 @app.route("/api/session/<sid>/task/<tid>/cancel", methods=["POST"])

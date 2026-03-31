@@ -358,16 +358,16 @@ input[type="checkbox"] { accent-color: var(--ac); }
             <div class="panel-body">
                 <div class="row">
                     <label class="text-sm">V1 sync track:</label>
-                    <select id="v1-sync-track" style="flex:1"><option value="0">0: (default)</option></select>
+                    <select id="v1-sync-track" style="flex:1" onchange="saveUIState()"><option value="0">0: (default)</option></select>
                 </div>
                 <div class="row">
                     <label class="text-sm">V2 sync track:</label>
-                    <select id="v2-sync-track" style="flex:1"><option value="0">0: (default)</option></select>
+                    <select id="v2-sync-track" style="flex:1" onchange="saveUIState()"><option value="0">0: (default)</option></select>
                 </div>
                 <div class="text-dim text-sm mt-4">Pick tracks that share common audio</div>
                 <div class="row mt-4" style="gap:12px">
                     <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
-                        <input type="checkbox" id="vocal-filter-cb" checked> Filter vocals (cross-language)
+                        <input type="checkbox" id="vocal-filter-cb" checked onchange="saveUIState()"> Filter vocals (cross-language)
                     </label>
                 </div>
                 <div class="row mt-4">
@@ -403,6 +403,7 @@ input[type="checkbox"] { accent-color: var(--ac); }
                 <div class="result-row"><span class="rlabel">Inliers</span><span class="value" id="r-inliers">-</span></div>
                 <div class="result-row"><span class="rlabel">Fit</span><span class="value" id="r-fit">-</span></div>
                 <div class="result-row"><span class="rlabel">Precision</span><span class="value" id="r-precision">-</span></div>
+                <div class="result-row"><span class="rlabel">Visual</span><span class="value" id="r-visual">-</span></div>
                 <textarea class="results-box mt-4" id="results-detail" readonly></textarea>
             </div>
         </div>
@@ -426,6 +427,7 @@ input[type="checkbox"] { accent-color: var(--ac); }
                     <button class="btn-red hidden" id="merge-stop" onclick="cancelRunningTask()">Stop</button>
                 </div>
                 <div class="progress-bar" id="merge-progress"><div class="fill"></div></div>
+                <button class="btn-red btn-sm mt-4" onclick="closeSession()" style="width:100%">Close Session</button>
             </div>
         </div>
 
@@ -461,15 +463,61 @@ const state = {
 let _sessionId = null;
 let _viewId = 0;
 let _runningTaskId = null;
+const _probeCache = {};
 let _runningTaskType = null;
 let _pollInterval = null;
 let _sessionCache = {};
+let _saveTimer = null;
+let _restoring = false;
+
+function saveUIState() {
+    if (_restoring || !_sessionId) return;
+    clearTimeout(_saveTimer);
+    _saveTimer = setTimeout(() => {
+        if (!_sessionId) return;
+        const uiState = {
+            v1_path: document.getElementById('v1-path-input').value,
+            v2_path: document.getElementById('v2-path-input').value,
+            out_path: document.getElementById('out-path-input').value,
+            v1_stream_selected: { ...state.v1StreamSelected },
+            v2_selected: { ...state.v2Selected },
+            track_overrides: { ...state.trackOverrides },
+            default_audio_idx: state.defaultAudioIdx,
+            container_fmt: document.querySelector('input[name="container-fmt"]:checked').value,
+            vocal_filter: document.getElementById('vocal-filter-cb').checked,
+            v1_sync_track: document.getElementById('v1-sync-track').value,
+            v2_sync_track: document.getElementById('v2-sync-track').value,
+            segments: state.segments,
+        };
+        if (_sessionCache[_sessionId]) {
+            _sessionCache[_sessionId].ui_state = { ...uiState };
+        }
+        fetch(`/api/session/${_sessionId}/state`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(uiState),
+        }).then(r => r.json()).then(data => {
+            if (data.version !== undefined && _sessionCache[_sessionId]) {
+                _sessionCache[_sessionId].version = data.version;
+                if (data.label) {
+                    _sessionCache[_sessionId].label = data.label;
+                    renderSessionList(_sessionCache);
+                }
+            }
+        }).catch(() => {});
+    }, 300);
+}
 
 function log(msg) {
     const box = document.getElementById('log-box');
     const ts = new Date().toLocaleTimeString();
-    box.value += `[${ts}] ${msg}\n`;
+    const line = `[${ts}] ${msg}`;
+    box.value += line + '\n';
     box.scrollTop = box.scrollHeight;
+    if (!_restoring && _sessionId && _sessionCache[_sessionId]) {
+        if (!_sessionCache[_sessionId].log_entries) _sessionCache[_sessionId].log_entries = [];
+        _sessionCache[_sessionId].log_entries.push(line);
+    }
 }
 
 function formatTimestamp(sec) {
@@ -518,11 +566,11 @@ function unlockButtons() {
     document.getElementById('merge-stop').classList.add('hidden');
 }
 
-function startPoll(taskType, taskId, onUpdate, onDone) {
+function startPoll(taskType, taskId, onUpdate, onDone, initialProgress) {
     stopPoll();
     _runningTaskId = taskId;
     _runningTaskType = taskType;
-    let lastProgress = '';
+    let lastProgress = initialProgress || '';
     let delay = 500;
     function schedulePoll() {
         _pollInterval = setTimeout(async () => {
@@ -588,7 +636,7 @@ function resetUI() {
     document.querySelector('input[name="container-fmt"][value="mkv"]').checked = true;
     document.getElementById('atempo-input').value = '1.000000';
     document.getElementById('offset-input').value = '0.000';
-    for (const k of ['r-mode','r-atempo','r-offset','r-inliers','r-fit','r-precision']) {
+    for (const k of ['r-mode','r-atempo','r-offset','r-inliers','r-fit','r-precision','r-visual']) {
         const el = document.getElementById(k);
         el.textContent = '-';
         el.style.color = '';
@@ -608,6 +656,7 @@ function resetState() {
     state.v1StreamSelected = {};
     state.v2Selected = {};
     state.trackOverrides = {};
+    state.defaultAudioIdx = null;
     state.mergeParams = null;
     state.segments = null;
     state.containerChange = false;
@@ -619,15 +668,28 @@ async function loadVideo(n) {
     const filepath = pathInput.value.trim();
     if (!filepath) return;
 
-    const fileInfo = document.getElementById(`v${n}-file-info`);
-    fileInfo.textContent = 'Probing...';
-    log(`[V${n}] Probing ${basename(filepath)}...`);
+    let result;
+    if (_probeCache[filepath]) {
+        result = _probeCache[filepath];
+    } else {
+        const fileInfo = document.getElementById(`v${n}-file-info`);
+        fileInfo.textContent = 'Probing...';
+        log(`[V${n}] Probing ${basename(filepath)}...`);
 
-    const result = await apiPost('/api/probe', { filepath });
-    if (result.error) {
-        fileInfo.textContent = 'Error';
-        log(`[V${n}] Probe error: ${result.error}`);
-        return;
+        result = await apiPost('/api/probe', { filepath });
+        if (result.error) {
+            fileInfo.textContent = 'Error';
+            log(`[V${n}] Probe error: ${result.error}`);
+            return;
+        }
+        _probeCache[filepath] = result;
+
+        const streamCounts = (result.streams || []).reduce((acc, s) => {
+            acc[s.codec_type] = (acc[s.codec_type] || 0) + 1;
+            return acc;
+        }, {});
+        const countStr = Object.entries(streamCounts).map(([k,v]) => `${v} ${k}`).join(', ');
+        log(`[V${n}] ${basename(filepath)}: ${countStr}, ${result.duration_fmt}`);
     }
 
     state[`v${n}`] = {
@@ -637,13 +699,7 @@ async function loadVideo(n) {
         duration: result.duration,
     };
 
-    fileInfo.textContent = `${basename(filepath)} \u2014 ${result.duration_fmt}`;
-    const streamCounts = (result.streams || []).reduce((acc, s) => {
-        acc[s.codec_type] = (acc[s.codec_type] || 0) + 1;
-        return acc;
-    }, {});
-    const countStr = Object.entries(streamCounts).map(([k,v]) => `${v} ${k}`).join(', ');
-    log(`[V${n}] ${basename(filepath)}: ${countStr}, ${result.duration_fmt}`);
+    document.getElementById(`v${n}-file-info`).textContent = `${basename(filepath)} \u2014 ${result.duration_fmt}`;
 
     if (n === 1) {
         state.containerChange = result.container_change;
@@ -659,6 +715,8 @@ async function loadVideo(n) {
     updateSyncCombos();
     updateMergeButton();
     updateSyncPanels();
+    await ensureSession();
+    saveUIState();
 }
 
 function streamLabel(s) {
@@ -694,12 +752,12 @@ function fillV1Streams(streams) {
     selAll.textContent = 'Select all';
     selAll.href = '#';
     selAll.style.color = 'var(--ac)';
-    selAll.addEventListener('click', e => { e.preventDefault(); container.querySelectorAll('input[type=checkbox]').forEach(cb => { cb.checked = true; state.v1StreamSelected[parseInt(cb.dataset.si)] = true; }); });
+    selAll.addEventListener('click', e => { e.preventDefault(); container.querySelectorAll('input[type=checkbox]').forEach(cb => { cb.checked = true; state.v1StreamSelected[parseInt(cb.dataset.si)] = true; }); saveUIState(); });
     const selNone = document.createElement('a');
     selNone.textContent = 'Select none';
     selNone.href = '#';
     selNone.style.color = 'var(--ac)';
-    selNone.addEventListener('click', e => { e.preventDefault(); container.querySelectorAll('input[type=checkbox]').forEach(cb => { cb.checked = false; state.v1StreamSelected[parseInt(cb.dataset.si)] = false; }); });
+    selNone.addEventListener('click', e => { e.preventDefault(); container.querySelectorAll('input[type=checkbox]').forEach(cb => { cb.checked = false; state.v1StreamSelected[parseInt(cb.dataset.si)] = false; }); saveUIState(); });
     selBar.appendChild(selAll);
     selBar.appendChild(selNone);
     container.appendChild(selBar);
@@ -713,7 +771,7 @@ function fillV1Streams(streams) {
         cb.type = 'checkbox';
         cb.checked = true;
         cb.dataset.si = s.stream_index;
-        cb.addEventListener('change', () => { state.v1StreamSelected[s.stream_index] = cb.checked; });
+        cb.addEventListener('change', () => { state.v1StreamSelected[s.stream_index] = cb.checked; saveUIState(); });
         label.appendChild(cb);
         const text = ` ${streamLabel(s)}`;
         label.appendChild(document.createTextNode(text));
@@ -737,12 +795,12 @@ function fillTracks(n, tracks) {
     selAll.textContent = 'Select all';
     selAll.href = '#';
     selAll.style.color = 'var(--ac)';
-    selAll.addEventListener('click', e => { e.preventDefault(); container.querySelectorAll('input[type=checkbox]').forEach(cb => { cb.checked = true; state.v2Selected[parseInt(cb.dataset.idx)] = true; }); });
+    selAll.addEventListener('click', e => { e.preventDefault(); container.querySelectorAll('input[type=checkbox]').forEach(cb => { cb.checked = true; state.v2Selected[parseInt(cb.dataset.idx)] = true; }); saveUIState(); });
     const selNone = document.createElement('a');
     selNone.textContent = 'Select none';
     selNone.href = '#';
     selNone.style.color = 'var(--ac)';
-    selNone.addEventListener('click', e => { e.preventDefault(); container.querySelectorAll('input[type=checkbox]').forEach(cb => { cb.checked = false; state.v2Selected[parseInt(cb.dataset.idx)] = false; }); });
+    selNone.addEventListener('click', e => { e.preventDefault(); container.querySelectorAll('input[type=checkbox]').forEach(cb => { cb.checked = false; state.v2Selected[parseInt(cb.dataset.idx)] = false; }); saveUIState(); });
     selBar.appendChild(selAll);
     selBar.appendChild(selNone);
     container.appendChild(selBar);
@@ -763,7 +821,7 @@ function fillTracks(n, tracks) {
         cb.type = 'checkbox';
         cb.checked = checked;
         cb.dataset.idx = t.index;
-        cb.addEventListener('change', () => { state.v2Selected[t.index] = cb.checked; });
+        cb.addEventListener('change', () => { state.v2Selected[t.index] = cb.checked; saveUIState(); });
         label.appendChild(cb);
         label.appendChild(document.createTextNode(` ${t.label}${langStr}${titleStr}`));
         container.appendChild(label);
@@ -814,7 +872,8 @@ async function ensureSession() {
     const res = await apiPost('/api/sessions', {});
     _sessionId = res.session_id;
     sessionStorage.setItem('audiosync_session', _sessionId);
-    refreshSessionList();
+    _sessionCache[_sessionId] = { label: 'New session', tasks: {}, active_task: null, ui_state: {}, version: 0, log_version: 0, created_at: 0 };
+    await refreshSessionList();
     return _sessionId;
 }
 
@@ -897,13 +956,37 @@ function showAlignResults(r) {
     precEl.textContent = `avg=${rmean.toFixed(3)}s  max=${rmax.toFixed(3)}s  end=${rend.toFixed(3)}s`;
     precEl.style.color = rmax < 0.5 ? 'var(--green)' : rmax < 1.5 ? 'var(--warn)' : 'var(--err)';
 
+    const vizEl = document.getElementById('r-visual');
+    if (r.visual_corrected) {
+        const aoSign = r.audio_offset >= 0 ? '+' : '';
+        const voSign = r.visual_offset >= 0 ? '+' : '';
+        vizEl.textContent = `corrected: ${aoSign}${r.audio_offset.toFixed(3)}s \u2192 ${voSign}${r.visual_offset.toFixed(3)}s`;
+        vizEl.style.color = 'var(--warn)';
+    } else {
+        vizEl.textContent = 'confirmed';
+        vizEl.style.color = 'var(--green)';
+    }
+
     state.segments = r.segments || null;
     renderSegmentOverrides();
 
     const detail = document.getElementById('results-detail');
     const v1c = r.v1_coverage || [0,0], v2c = r.v2_coverage || [0,0];
     const v1i = r.v1_interval || 0, v2i = r.v2_interval || 0;
-    let txt = `V1 hop: ${v1i.toFixed(2)}s  V2 hop: ${v2i.toFixed(2)}s\n`;
+
+    const aoSpd = r.audio_speed || at;
+    const aoOff = r.audio_offset !== undefined ? r.audio_offset : off;
+    const aoSign = aoOff >= 0 ? '+' : '';
+    let txt = `Audio alignment:  offset=${aoSign}${aoOff.toFixed(3)}s  speed=${(1.0/aoSpd).toFixed(6)}\n`;
+    if (r.visual_corrected) {
+        const voSign = r.visual_offset >= 0 ? '+' : '';
+        const scoreStr = r.audio_visual_score !== null ? `(score ${r.audio_visual_score.toFixed(2)}\u2192${r.visual_score.toFixed(2)})` : '';
+        txt += `Visual check:     corrected \u2192 offset=${voSign}${r.visual_offset.toFixed(3)}s  speed=${(1.0/r.visual_speed).toFixed(6)}  ${scoreStr}\n`;
+    } else {
+        txt += `Visual check:     confirmed\n`;
+    }
+    txt += '\u2500'.repeat(38) + '\n';
+    txt += `V1 hop: ${v1i.toFixed(2)}s  V2 hop: ${v2i.toFixed(2)}s\n`;
     txt += `V1: ${formatTimestamp(v1c[0])} - ${formatTimestamp(v1c[1])}\n`;
     txt += `V2: ${formatTimestamp(v2c[0])} - ${formatTimestamp(v2c[1])}\n`;
     txt += `Residual: avg=${rmean.toFixed(3)}s max=${rmax.toFixed(3)}s\n`;
@@ -1030,6 +1113,7 @@ function updateParams() {
     if (isRemuxMode()) {
         prepareMerge(1.0, 0, []);
         log('[Remux] Parameters updated');
+        saveUIState();
         return;
     }
     const at = parseFloat(document.getElementById('atempo-input').value);
@@ -1046,6 +1130,7 @@ function updateParams() {
     }
     prepareMerge(at, off, getV2Indices());
     log('[Merge] Parameters updated');
+    saveUIState();
 }
 
 async function runMerge() {
@@ -1362,6 +1447,7 @@ function getDefaultOutputPath() {
 
 function onContainerChange() {
     updateOutputPathIfDefault();
+    saveUIState();
 }
 
 function updateSyncPanels() {
@@ -1535,6 +1621,7 @@ function openMetadataEditor(which) {
         const off = parseFloat(document.getElementById('offset-input').value);
         if (!isNaN(at) && !isNaN(off)) prepareMerge(at, off, getV2Indices());
         log(`[Metadata] Updated ${Object.keys(state.trackOverrides).length} track(s)`);
+        saveUIState();
     });
 }
 
@@ -1591,9 +1678,11 @@ function openDefaultAudioEditor() {
         state.defaultAudioIdx = sel ? parseInt(sel.value) : 0;
         overlay.remove();
         log(`[Default Audio] Track ${state.defaultAudioIdx} selected as default`);
+        saveUIState();
     });
 }
 
+document.getElementById('out-path-input').addEventListener('change', () => { saveUIState(); });
 document.getElementById('v1-path-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadVideo(1); });
 document.getElementById('v2-path-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadVideo(2); });
 
@@ -1608,8 +1697,27 @@ async function newSession() {
     log('Ready.');
 }
 
+async function closeSession() {
+    if (!_sessionId) return;
+    if (_runningTaskId) {
+        if (!confirm('A task is currently running. Stop it and close this session?')) return;
+    }
+    const sid = _sessionId;
+    await fetch(`/api/session/${sid}`, { method: 'DELETE' });
+    delete _sessionCache[sid];
+    stopPoll();
+    ++_viewId;
+    _sessionId = null;
+    sessionStorage.removeItem('audiosync_session');
+    resetUI();
+    resetState();
+    renderSessionList(_sessionCache);
+    log(`Session closed.`);
+}
+
 async function switchToSession(sid, sess) {
     stopPoll();
+    _restoring = true;
     const myView = ++_viewId;
     _sessionId = sid;
     sessionStorage.setItem('audiosync_session', sid);
@@ -1617,23 +1725,23 @@ async function switchToSession(sid, sess) {
     resetState();
     renderSessionList(_sessionCache);
 
-    let v1Path = '', v2Path = '', outPath = '';
+    // Restore cached log entries
+    const logEntries = (_sessionCache[sid] && _sessionCache[sid].log_entries) || [];
+    if (logEntries.length) {
+        const box = document.getElementById('log-box');
+        box.value = logEntries.join('\n') + '\n';
+        box.scrollTop = box.scrollHeight;
+    }
+
+    const ui = sess.ui_state || {};
     let lastAlignResult = null;
     let lastMergeResult = null;
     let activeTask = null;
     let activeTaskType = null;
-    let lastAlignParams = null;
 
     for (const [tid, t] of Object.entries(sess.tasks || {})) {
-        const p = t.params || {};
-        if (p.v1_path) v1Path = p.v1_path;
-        if (p.v2_path) v2Path = p.v2_path;
-        if (p.out_path) outPath = p.out_path;
-        if (t.type === 'align') {
-            lastAlignParams = p;
-            if (t.status === 'done' && t.result) {
-                lastAlignResult = t.result;
-            }
+        if (t.type === 'align' && t.status === 'done' && t.result) {
+            lastAlignResult = t.result;
         }
         if (t.type === 'merge' && t.status === 'done' && t.result) {
             lastMergeResult = t.result;
@@ -1644,95 +1752,93 @@ async function switchToSession(sid, sess) {
         }
     }
 
-    let savedV1Indices = null, savedV2Indices = null, savedMetadata = null;
-    for (const [tid, t] of Object.entries(sess.tasks || {})) {
-        const p = t.params || {};
-        if (t.type === 'merge' && p.v1_stream_indices) {
-            savedV1Indices = p.v1_stream_indices;
-            savedV2Indices = p.v2_indices || null;
-            savedMetadata = p.metadata || null;
-        }
-    }
+    /* --- Load videos from ui_state (or fall back to task params) --- */
+    const v1Path = ui.v1_path || _extractFromTasks(sess, 'v1_path');
+    const v2Path = ui.v2_path || _extractFromTasks(sess, 'v2_path');
 
     if (v1Path) {
         document.getElementById('v1-path-input').value = v1Path;
         await loadVideo(1);
-        if (_viewId !== myView) return;
+        if (_viewId !== myView) { _restoring = false; return; }
     }
     if (v2Path) {
         document.getElementById('v2-path-input').value = v2Path;
         await loadVideo(2);
-        if (_viewId !== myView) return;
+        if (_viewId !== myView) { _restoring = false; return; }
     }
 
-    if (savedV1Indices) {
-        const v1Set = new Set(savedV1Indices);
-        for (const si of Object.keys(state.v1StreamSelected)) {
+    /* --- Restore all UI state --- */
+
+    // V1 stream selections
+    if (ui.v1_stream_selected) {
+        for (const [si, val] of Object.entries(ui.v1_stream_selected)) {
             const idx = parseInt(si);
-            state.v1StreamSelected[idx] = v1Set.has(idx);
+            state.v1StreamSelected[idx] = val;
         }
         document.querySelectorAll('#v1-tracks input[type=checkbox]').forEach(cb => {
             const si = parseInt(cb.dataset.si);
-            cb.checked = v1Set.has(si);
+            if (ui.v1_stream_selected[si] !== undefined)
+                cb.checked = ui.v1_stream_selected[si];
         });
     }
-    if (savedV2Indices) {
-        const v2Set = new Set(savedV2Indices);
-        for (const ti of Object.keys(state.v2Selected)) {
+
+    // V2 track selections
+    if (ui.v2_selected) {
+        for (const [ti, val] of Object.entries(ui.v2_selected)) {
             const idx = parseInt(ti);
-            state.v2Selected[idx] = v2Set.has(idx);
+            state.v2Selected[idx] = val;
         }
         document.querySelectorAll('#v2-tracks input[type=checkbox]').forEach(cb => {
             const idx = parseInt(cb.dataset.idx);
-            cb.checked = v2Set.has(idx);
+            if (ui.v2_selected[idx] !== undefined)
+                cb.checked = ui.v2_selected[idx];
         });
     }
-    if (savedMetadata && savedV1Indices) {
-        let mi = 0;
-        const v1AudioIndices = savedV1Indices.filter(si => {
-            const s = (state.v1.streams || []).find(s => s.stream_index === si);
-            return s && s.codec_type === 'audio';
-        });
-        for (const si of v1AudioIndices) {
-            if (mi < savedMetadata.length) {
-                const key = `v1_s${si}`;
-                state.trackOverrides[key] = {
-                    language: savedMetadata[mi].language || '',
-                    title: savedMetadata[mi].title || '',
-                };
-                mi++;
-            }
-        }
-        if (savedV2Indices) {
-            for (const ti of savedV2Indices) {
-                if (mi < savedMetadata.length) {
-                    const key = `v2_${ti}`;
-                    state.trackOverrides[key] = {
-                        language: savedMetadata[mi].language || '',
-                        title: savedMetadata[mi].title || '',
-                    };
-                    mi++;
-                }
-            }
-        }
+
+    // Track metadata overrides
+    if (ui.track_overrides && Object.keys(ui.track_overrides).length) {
+        state.trackOverrides = { ...ui.track_overrides };
         if (state.v2.tracks.length) fillTracks(2, state.v2.tracks);
     }
 
-    if (outPath) {
-        document.getElementById('out-path-input').value = outPath;
+    // Default audio track
+    if (ui.default_audio_idx !== undefined && ui.default_audio_idx !== null) {
+        state.defaultAudioIdx = ui.default_audio_idx;
     }
 
-    if (lastAlignParams) {
-        if (lastAlignParams.vocal_filter !== undefined)
-            document.getElementById('vocal-filter-cb').checked = !!lastAlignParams.vocal_filter;
-        if (lastAlignParams.v1_track !== undefined)
-            document.getElementById('v1-sync-track').value = lastAlignParams.v1_track;
-        if (lastAlignParams.v2_track !== undefined)
-            document.getElementById('v2-sync-track').value = lastAlignParams.v2_track;
+    // Container format
+    if (ui.container_fmt) {
+        const radio = document.querySelector(`input[name="container-fmt"][value="${ui.container_fmt}"]`);
+        if (radio) radio.checked = true;
     }
+
+    // Vocal filter & sync tracks
+    if (ui.vocal_filter !== undefined)
+        document.getElementById('vocal-filter-cb').checked = ui.vocal_filter;
+    if (ui.v1_sync_track !== undefined)
+        document.getElementById('v1-sync-track').value = ui.v1_sync_track;
+    if (ui.v2_sync_track !== undefined)
+        document.getElementById('v2-sync-track').value = ui.v2_sync_track;
+
+    // Output path
+    const outPath = ui.out_path || _extractFromTasks(sess, 'out_path');
+    if (outPath)
+        document.getElementById('out-path-input').value = outPath;
+
+    // Segment overrides from ui_state
+    if (ui.segments && ui.segments.length > 1) {
+        state.segments = ui.segments;
+    }
+
+    /* --- Restore task results (display only) --- */
 
     if (lastAlignResult) {
         showAlignResults(lastAlignResult);
+        // If ui_state has user-edited segments, override what showAlignResults set
+        if (ui.segments && ui.segments.length > 1) {
+            state.segments = ui.segments;
+            renderSegmentOverrides();
+        }
         log(`[Align] Restored: atempo=${lastAlignResult.speed_ratio.toFixed(6)}, offset=${lastAlignResult.offset.toFixed(3)}s`);
     }
 
@@ -1741,19 +1847,37 @@ async function switchToSession(sid, sess) {
         log(`[Merge] Completed: ${lastMergeResult.elapsed} \u2192 ${lastMergeResult.output}`);
     }
 
-    const freshSess = _sessionCache[sid];
-    if (freshSess) {
-        for (const [tid, t] of Object.entries(freshSess.tasks || {})) {
-            if (t.status === 'running') {
-                activeTask = tid;
-                activeTaskType = t.type;
+    // Fetch fresh session data to check actual task status
+    try {
+        const freshRes = await fetch(`/api/session/${sid}`);
+        if (freshRes.ok) {
+            const freshData = await freshRes.json();
+            const logEntries = _sessionCache[sid] ? _sessionCache[sid].log_entries : null;
+            if (logEntries) freshData.log_entries = logEntries;
+            _sessionCache[sid] = freshData;
+            for (const [tid, t] of Object.entries(freshData.tasks || {})) {
+                if (t.status === 'running') {
+                    activeTask = tid;
+                    activeTaskType = t.type;
+                }
+                // Show results for tasks that completed while we were away
+                if (t.type === 'align' && t.status === 'done' && t.result && !lastAlignResult) {
+                    lastAlignResult = t.result;
+                    showAlignResults(lastAlignResult);
+                    if (ui.segments && ui.segments.length > 1) {
+                        state.segments = ui.segments;
+                        renderSegmentOverrides();
+                    }
+                }
             }
         }
-    }
+    } catch (e) {}
+    if (_viewId !== myView) { _restoring = false; return; }
 
     if (activeTask && activeTaskType) {
         lockButtons(activeTaskType);
-        log(`[${activeTaskType}] Reconnecting to running task...`);
+        const activeTaskData = (sess.tasks || {})[activeTask] || {};
+        const currentProgress = activeTaskData.progress || '';
 
         if (activeTaskType === 'align') {
             document.getElementById('align-progress').classList.add('progress-indeterminate');
@@ -1773,7 +1897,8 @@ async function switchToSession(sid, sess) {
                         log(`[Align] ${task.status}: ${task.error || ''}`);
                     }
                     refreshSessionList();
-                }
+                },
+                currentProgress
             );
         } else if (activeTaskType === 'merge') {
             const progressBar = document.getElementById('merge-progress');
@@ -1817,10 +1942,20 @@ async function switchToSession(sid, sess) {
                         log(`[Merge] ${task.status}: ${task.error || ''}`);
                     }
                     refreshSessionList();
-                }
+                },
+                currentProgress
             );
         }
     }
+    _restoring = false;
+}
+
+function _extractFromTasks(sess, key) {
+    for (const [tid, t] of Object.entries(sess.tasks || {})) {
+        const p = t.params || {};
+        if (p[key]) return p[key];
+    }
+    return '';
 }
 
 function renderSessionList(sessions) {
@@ -1846,7 +1981,7 @@ function renderSessionList(sessions) {
             `<div class="session-label">${escapeHtml(sess.label)}</div>` +
             `<div class="session-status"><span class="status-dot ${dotClass}"></span>${statusText}</div>`;
         div.addEventListener('click', () => {
-            switchToSession(sid, sess);
+            switchToSession(sid, _sessionCache[sid] || sess);
         });
         container.appendChild(div);
     }
@@ -1855,8 +1990,32 @@ function renderSessionList(sessions) {
 async function refreshSessionList() {
     try {
         const res = await fetch('/api/sessions');
-        _sessionCache = await res.json();
+        const sessions = await res.json();
+        // Preserve log_entries from existing cache
+        for (const [sid, sess] of Object.entries(sessions)) {
+            if (_sessionCache[sid] && _sessionCache[sid].log_entries) {
+                sess.log_entries = _sessionCache[sid].log_entries;
+            }
+        }
+        _sessionCache = sessions;
         renderSessionList(_sessionCache);
+    } catch (e) {}
+}
+
+async function pollActiveSession() {
+    if (!_sessionId) return;
+    try {
+        const res = await fetch(`/api/session/${_sessionId}/version`);
+        const { version } = await res.json();
+        const cached = _sessionCache[_sessionId];
+
+        if (!cached || cached.version !== version) {
+            const fullRes = await fetch(`/api/session/${_sessionId}`);
+            const sess = await fullRes.json();
+            if (cached && cached.log_entries) sess.log_entries = cached.log_entries;
+            _sessionCache[_sessionId] = sess;
+            renderSessionList(_sessionCache);
+        }
     } catch (e) {}
 }
 
@@ -1873,7 +2032,7 @@ async function init() {
 }
 
 init();
-setInterval(refreshSessionList, 10000);
+setInterval(pollActiveSession, 10000);
 </script>
 </body>
 </html>

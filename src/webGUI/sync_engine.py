@@ -155,6 +155,9 @@ def auto_align_audio(fp1, fp2, track1=0, track2=0,
     coarse_offset, xcorr_speed, xcorr_corr, alt_offsets = xcorr_on_downsampled(
         ds1, ds2, ds_rate, SPEED_CANDIDATES, return_alt_offsets=True)
 
+    audio_offset = coarse_offset
+    audio_speed = xcorr_speed
+
     if cancel:
         cancel.check()
 
@@ -163,6 +166,7 @@ def auto_align_audio(fp1, fp2, track1=0, track2=0,
     v2_has_video = any(s["codec_type"] == "video"
                        for s in fflib.probe(fp2).get("streams", []))
     visual_corrected = False
+    visual_result = None
     if v1_has_video and v2_has_video:
         visual_result = verify_offset_visual(
             fp1, fp2, coarse_offset, xcorr_speed, alt_offsets, dur1, dur2,
@@ -242,6 +246,13 @@ def auto_align_audio(fp1, fp2, track1=0, track2=0,
             "segments": [{"v1_start": 0.0, "v1_end": float("inf"),
                           "offset": coarse_offset, "n_inliers": 0}],
             "warnings": decode_warnings,
+            "audio_offset": audio_offset,
+            "audio_speed": audio_speed,
+            "visual_corrected": visual_corrected,
+            "visual_offset": visual_result["offset"] if visual_corrected else None,
+            "visual_speed": visual_result["speed"] if visual_corrected else None,
+            "visual_score": visual_result["score"] if visual_corrected else None,
+            "audio_visual_score": visual_result.get("audio_score") if visual_corrected else None,
         }
 
     t1m = np.array([ts1[g[0]] for g in good])
@@ -367,6 +378,13 @@ def auto_align_audio(fp1, fp2, track1=0, track2=0,
         "coarse_offset": coarse_offset,
         "segments": segments,
         "warnings": decode_warnings,
+        "audio_offset": audio_offset,
+        "audio_speed": audio_speed,
+        "visual_corrected": visual_corrected,
+        "visual_offset": visual_result["offset"] if visual_corrected else None,
+        "visual_speed": visual_result["speed"] if visual_corrected else None,
+        "visual_score": visual_result["score"] if visual_corrected else None,
+        "audio_visual_score": visual_result.get("audio_score") if visual_corrected else None,
     }
 
 
