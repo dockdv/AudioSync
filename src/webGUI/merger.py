@@ -2,8 +2,10 @@
 
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import fflib
 from fflib import CancelledError
 from probe import get_duration, get_audio_sample_rate
@@ -179,6 +181,7 @@ def remux_with_ffmpeg(v1_path, out_path,
                       ffmpeg_path=None, metadata_args=None,
                       sub_metadata_args=None,
                       default_audio=None,
+                      audio_order=None,
                       progress_cb=None, cancel=None):
     if not ffmpeg_path:
         ffmpeg_path = find_ffmpeg_binary()
@@ -204,8 +207,9 @@ def remux_with_ffmpeg(v1_path, out_path,
     non_sub = [si for si in selected if v1_stream_types.get(si) != "subtitle"]
     has_subs = len(v1_sub) > 0
 
-    base, ext = os.path.splitext(out_path)
-    tmp_nosubs = base + ".tmp_nosubs.mkv"
+    tmp_dir = tempfile.mkdtemp(dir=os.path.dirname(out_path) or ".",
+                               prefix=".audiosync_tmp_")
+    tmp_nosubs = os.path.join(tmp_dir, "nosubs.mkv")
 
     try:
         # Pass 1: mux everything except subtitles
@@ -216,7 +220,14 @@ def remux_with_ffmpeg(v1_path, out_path,
         cmd = [ffmpeg_path, "-y", "-hide_banner"]
         cmd += ["-i", v1_path]
 
-        for si in non_sub:
+        # Separate non_sub into video+other and audio, reorder audio
+        ns_video = [si for si in non_sub if v1_stream_types.get(si) != "audio"]
+        ns_audio = [si for si in non_sub if v1_stream_types.get(si) == "audio"]
+        if audio_order is not None and len(audio_order) == len(ns_audio):
+            ns_audio = [ns_audio[i] for i in audio_order]
+        for si in ns_video:
+            cmd += ["-map", f"0:{si}"]
+        for si in ns_audio:
             cmd += ["-map", f"0:{si}"]
 
         cmd += ["-c", "copy"]
@@ -275,11 +286,8 @@ def remux_with_ffmpeg(v1_path, out_path,
 
             _run_ffmpeg(cmd, v1_dur, progress_cb, cancel, progress_prefix="sub")
     finally:
-        if os.path.isfile(tmp_nosubs):
-            try:
-                os.remove(tmp_nosubs)
-            except OSError:
-                pass
+        if os.path.isdir(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     if progress_cb:
         progress_cb("progress", "mux:100")
@@ -293,6 +301,7 @@ def merge_with_ffmpeg(v1_path, v2_path, out_path, atempo, offset,
                       ffmpeg_path=None, metadata_args=None,
                       sub_metadata_args=None,
                       default_audio=None,
+                      audio_order=None,
                       progress_cb=None, cancel=None):
     if not ffmpeg_path:
         ffmpeg_path = find_ffmpeg_binary()
@@ -309,9 +318,10 @@ def merge_with_ffmpeg(v1_path, v2_path, out_path, atempo, offset,
     n_segments = len(segments) if segments else 1
     use_piecewise = (segments is not None and n_segments > 1)
 
-    base, ext = os.path.splitext(out_path)
-    tmp_audio = base + ".tmp.mka"
-    tmp_nosubs = base + ".tmp_nosubs.mkv"
+    tmp_dir = tempfile.mkdtemp(dir=os.path.dirname(out_path) or ".",
+                               prefix=".audiosync_tmp_")
+    tmp_audio = os.path.join(tmp_dir, "audio.mka")
+    tmp_nosubs = os.path.join(tmp_dir, "nosubs.mkv")
 
     v1_info = fflib.probe(v1_path)
     v1_stream_types = {s["stream_index"]: s["codec_type"]
@@ -334,7 +344,8 @@ def merge_with_ffmpeg(v1_path, v2_path, out_path, atempo, offset,
                          v1_n_audio, v2_indices, v1_dur,
                          v1_stream_indices, metadata_args,
                          progress_cb, cancel, skip_subs=has_subs,
-                         default_audio=default_audio)
+                         default_audio=default_audio,
+                         audio_order=audio_order)
 
         if has_subs:
             _merge_pass3_subs(ffmpeg_path, mux_target, v1_path, out_path,
@@ -342,12 +353,8 @@ def merge_with_ffmpeg(v1_path, v2_path, out_path, atempo, offset,
                               progress_cb, cancel,
                               sub_metadata_args=sub_metadata_args)
     finally:
-        for tmp in (tmp_audio, tmp_nosubs):
-            if os.path.isfile(tmp):
-                try:
-                    os.remove(tmp)
-                except OSError:
-                    pass
+        if os.path.isdir(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     if progress_cb:
         progress_cb("progress", "mux:100")
@@ -462,7 +469,8 @@ def _merge_pass2_mux(ffmpeg_path, v1_path, tmp_audio, out_path,
                      v1_n_audio, v2_indices, v1_dur,
                      v1_stream_indices, metadata_args,
                      progress_cb, cancel, skip_subs=False,
-                     default_audio=None):
+                     default_audio=None,
+                     audio_order=None):
     if progress_cb:
         progress_cb("status", "Pass 2: muxing...")
 
@@ -494,10 +502,15 @@ def _merge_pass2_mux(ffmpeg_path, v1_path, tmp_audio, out_path,
 
     for si in v1_vid:
         cmd += ["-map", f"0:{si}"]
-    for si in v1_aud:
-        cmd += ["-map", f"0:{si}"]
-    for i in range(len(v2_indices)):
-        cmd += ["-map", f"1:a:{i}"]
+
+    # Build combined audio map entries, then reorder if audio_order provided
+    audio_maps = [f"0:{si}" for si in v1_aud] + \
+                 [f"1:a:{i}" for i in range(len(v2_indices))]
+    if audio_order is not None and len(audio_order) == len(audio_maps):
+        audio_maps = [audio_maps[i] for i in audio_order]
+    for m in audio_maps:
+        cmd += ["-map", m]
+
     for si in v1_rest:
         cmd += ["-map", f"0:{si}"]
 

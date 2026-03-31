@@ -893,8 +893,14 @@ def refine_boundary_visual(v1_path, v2_path, segments, speed,
             if v2_t < 0:
                 lo = mid
                 continue
-            f1 = fflib.extract_frame(v1_path, mid)
-            f2 = fflib.extract_frame(v2_path, v2_t)
+            try:
+                f1 = fflib.extract_frame(v1_path, mid)
+            except Exception:
+                f1 = None
+            try:
+                f2 = fflib.extract_frame(v2_path, v2_t)
+            except Exception:
+                f2 = None
             sim = _frame_similarity(f1, f2)
             if sim > 0.5:
                 lo = mid

@@ -336,6 +336,7 @@ def api_merge(sid):
     metadata = data.get("metadata", [])
     sub_metadata = data.get("sub_metadata", [])
     default_audio = data.get("default_audio", None)
+    audio_order = data.get("audio_order", None)
     segments = data.get("segments", None)
 
     if not v1 or not os.path.isfile(v1):
@@ -352,7 +353,7 @@ def api_merge(sid):
         "v2_indices": v2_indices,
         "v1_duration": v1_duration, "metadata": metadata,
         "sub_metadata": sub_metadata, "default_audio": default_audio,
-        "segments": segments,
+        "audio_order": audio_order, "segments": segments,
     })
     if err:
         return jsonify({"error": err}), 409
@@ -374,6 +375,7 @@ def api_merge(sid):
                 metadata_args=metadata,
                 sub_metadata_args=sub_metadata,
                 default_audio=default_audio,
+                audio_order=audio_order,
                 progress_cb=progress_cb, cancel=cancel,
             )
             elapsed = time.monotonic() - t0
@@ -411,6 +413,7 @@ def api_remux(sid):
     metadata = data.get("metadata", [])
     sub_metadata = data.get("sub_metadata", [])
     default_audio = data.get("default_audio", None)
+    audio_order = data.get("audio_order", None)
 
     if not v1 or not os.path.isfile(v1):
         return jsonify({"error": f"V1 not found: {v1}"}), 400
@@ -422,6 +425,7 @@ def api_remux(sid):
         "v1_stream_indices": v1_stream_indices,
         "v1_duration": v1_duration, "metadata": metadata,
         "sub_metadata": sub_metadata, "default_audio": default_audio,
+        "audio_order": audio_order,
     })
     if err:
         return jsonify({"error": err}), 409
@@ -440,6 +444,7 @@ def api_remux(sid):
                 metadata_args=metadata,
                 sub_metadata_args=sub_metadata,
                 default_audio=default_audio,
+                audio_order=audio_order,
                 progress_cb=progress_cb, cancel=cancel,
             )
             elapsed = time.monotonic() - t0

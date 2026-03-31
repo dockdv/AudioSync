@@ -935,6 +935,30 @@ function showAlignResults(r) {
     log(`[Align] Alignment complete${segMsg}`);
 }
 
+function reorderAudioTracks(metadata, defaultIdx) {
+    if (metadata.length <= 1) return { sorted: metadata, order: metadata.map((_, i) => i) };
+    const defIdx = (defaultIdx != null && defaultIdx < metadata.length) ? defaultIdx : 0;
+    const defLang = metadata[defIdx].language || 'und';
+    const defGroup = [];
+    const rest = [];
+    for (let i = 0; i < metadata.length; i++) {
+        if (i === defIdx) {
+            defGroup.unshift({ meta: metadata[i], orig: i });
+        } else if ((metadata[i].language || 'und') === defLang) {
+            defGroup.push({ meta: metadata[i], orig: i });
+        } else {
+            rest.push({ meta: metadata[i], orig: i });
+        }
+    }
+    rest.sort((a, b) => {
+        const na = LANG_NAMES[a.meta.language] || a.meta.language || '';
+        const nb = LANG_NAMES[b.meta.language] || b.meta.language || '';
+        return na.localeCompare(nb);
+    });
+    const combined = [...defGroup, ...rest];
+    return { sorted: combined.map(e => e.meta), order: combined.map(e => e.orig) };
+}
+
 function prepareMerge(atempo, offset, v2Indices) {
     const v1 = state.v1.path, v2 = state.v2.path;
     if (!v1) return;
@@ -959,7 +983,8 @@ function prepareMerge(atempo, offset, v2Indices) {
         sub_metadata.push({ language: ovr.language || s.language || 'und', title: ovr.title !== undefined ? ovr.title : (s.title || '') });
     }
     if (isRemuxMode()) {
-        const params = { v1_path: v1, out_path: outPath, v1_stream_indices: v1StreamIndices, v1_duration: state.v1.duration, metadata, sub_metadata, default_audio: state.defaultAudioIdx };
+        const { sorted: sortedMeta, order: audioOrder } = reorderAudioTracks(metadata, state.defaultAudioIdx);
+        const params = { v1_path: v1, out_path: outPath, v1_stream_indices: v1StreamIndices, v1_duration: state.v1.duration, metadata: sortedMeta, sub_metadata, default_audio: 0, audio_order: audioOrder };
         state.mergeParams = params;
         log(`[Remux] Ready \u2192 ${basename(outPath)}`);
         return;
@@ -970,7 +995,8 @@ function prepareMerge(atempo, offset, v2Indices) {
         const t = (state.v2.tracks || []).find(t => t.index === tidx) || {};
         metadata.push({ language: ovr.language || t.language || 'und', title: ovr.title !== undefined ? ovr.title : (t.title || '') });
     }
-    const params = { v1_path: v1, v2_path: v2, out_path: outPath, atempo, offset, v1_n_audio: nV1Audio, v1_stream_indices: v1StreamIndices, v2_indices: v2Indices, v1_duration: state.v1.duration, metadata, sub_metadata, default_audio: state.defaultAudioIdx };
+    const { sorted: sortedMeta, order: audioOrder } = reorderAudioTracks(metadata, state.defaultAudioIdx);
+    const params = { v1_path: v1, v2_path: v2, out_path: outPath, atempo, offset, v1_n_audio: nV1Audio, v1_stream_indices: v1StreamIndices, v2_indices: v2Indices, v1_duration: state.v1.duration, metadata: sortedMeta, sub_metadata, default_audio: 0, audio_order: audioOrder };
     if (state.segments && state.segments.length > 1) {
         params.segments = state.segments;
     }
