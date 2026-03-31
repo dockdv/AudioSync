@@ -86,6 +86,9 @@ def probe(handle):
     audio_idx = 0
     for s in data.get("streams", []):
         codec_type = s.get("codec_type", "unknown")
+        disposition = s.get("disposition") or {}
+        if codec_type == "video" and disposition.get("attached_pic", 0):
+            codec_type = "attachment"
         stream_index = int(s.get("index", 0))
         tags = s.get("tags") or {}
         language = tags.get("language", "und")

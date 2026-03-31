@@ -5,7 +5,8 @@ import re
 import subprocess
 import sys
 import fflib
-from sync_engine import CancelledError, get_duration, get_audio_sample_rate
+from sync_engine import CancelledError
+from probe import get_duration, get_audio_sample_rate
 
 
 def find_ffmpeg_binary():

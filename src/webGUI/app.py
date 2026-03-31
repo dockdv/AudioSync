@@ -8,10 +8,12 @@ import uuid
 
 from flask import Flask, render_template, request, jsonify
 import fflib
-from sync_engine import (
+from probe import (
     LANG_NAMES, ALL_LANGUAGES,
     check_av, needs_container_change,
     probe_full,
+)
+from sync_engine import (
     format_timestamp,
     CancellableTask, CancelledError,
     auto_align_audio,
