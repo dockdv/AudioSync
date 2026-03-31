@@ -1,5 +1,6 @@
 .easy-git/
 .samples/
+tools/
 ffmpeg
 ffmpeg.exe
 ffprobe

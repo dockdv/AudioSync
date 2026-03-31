@@ -97,7 +97,7 @@ def extract_audio_fingerprints(filepath, track_index=0,
     if audio_data is not None:
         audio = audio_data
     else:
-        audio = _decode_full_audio(filepath, track_index, sr, cancel)
+        audio, _ = _decode_full_audio(filepath, track_index, sr, cancel)
     if len(audio) < window_samples:
         raise RuntimeError("Could not extract enough audio data")
 
@@ -136,14 +136,21 @@ def extract_audio_fingerprints(filepath, track_index=0,
 
 
 def _decode_full_audio(filepath, track_index, sr, cancel=None,
-                       vocal_filter=False, fast_decode=False):
-    audio = fflib.decode_audio(filepath, track_index, sr,
-                               vocal_filter=vocal_filter,
-                               fast_decode=fast_decode,
-                               cancel=cancel)
+                       vocal_filter=False):
+    audio, warnings = fflib.decode_audio(filepath, track_index, sr,
+                                         vocal_filter=vocal_filter,
+                                         cancel=cancel)
     if len(audio) == 0:
         raise RuntimeError("No audio data decoded")
-    return audio
+    decoded_dur = len(audio) / sr
+    expected_dur = get_duration(filepath)
+    msgs = []
+    if warnings:
+        msgs.append(f"FFmpeg: {warnings}")
+    if expected_dur > 0 and decoded_dur < expected_dur - 30:
+        msgs.append(f"Decoded {decoded_dur:.1f}s of expected {expected_dur:.1f}s "
+                     f"({expected_dur - decoded_dur:.1f}s missing)")
+    return audio, msgs
 
 
 def extract_band_peak_fingerprints(filepath, track_index=0,
@@ -178,7 +185,7 @@ def extract_band_peak_fingerprints(filepath, track_index=0,
     if audio_data is not None:
         audio = audio_data
     else:
-        audio = _decode_full_audio(filepath, track_index, sr, cancel)
+        audio, _ = _decode_full_audio(filepath, track_index, sr, cancel)
     if len(audio) < window_samples:
         raise RuntimeError("Could not extract enough audio data")
 
@@ -576,7 +583,7 @@ def _snap_speed_to_candidate(a, t1_inliers, t2_inliers):
 
 def auto_align_audio(fp1, fp2, track1=0, track2=0,
                       progress_cb=None, cancel=None,
-                      vocal_filter=False, fast_decode=False):
+                      vocal_filter=False):
     dur1 = get_duration(fp1)
     dur2 = get_duration(fp2)
     hop = AUDIO_HOP_SEC
@@ -584,17 +591,22 @@ def auto_align_audio(fp1, fp2, track1=0, track2=0,
     hop1 = dur1 / max_s if (dur1 > 0 and dur1 / hop > max_s) else hop
     hop2 = dur2 / max_s if (dur2 > 0 and dur2 / hop > max_s) else hop
 
+    decode_warnings = []
     if progress_cb:
         progress_cb("status", "Decoding V1 + V2 audio...")
     with ThreadPoolExecutor(max_workers=2) as pool:
         f1 = pool.submit(_decode_full_audio, fp1, track1, AUDIO_SAMPLE_RATE,
-                         cancel, fast_decode=fast_decode)
+                         cancel)
         f2 = pool.submit(_decode_full_audio, fp2, track2, AUDIO_SAMPLE_RATE,
-                         cancel, fast_decode=fast_decode)
-        audio1 = f1.result()
-        audio2 = f2.result()
+                         cancel)
+        audio1, msgs1 = f1.result()
+        audio2, msgs2 = f2.result()
     if cancel:
         cancel.check()
+    for m in (msgs1 or []):
+        decode_warnings.append(f"V1: {m}")
+    for m in (msgs2 or []):
+        decode_warnings.append(f"V2: {m}")
 
     if progress_cb:
         progress_cb("status", "Band-peak FP: V1...")
@@ -654,8 +666,8 @@ def auto_align_audio(fp1, fp2, track1=0, track2=0,
                              AUDIO_SAMPLE_RATE, cancel, vocal_filter=True)
             f2 = pool.submit(_decode_full_audio, fp2, track2,
                              AUDIO_SAMPLE_RATE, cancel, vocal_filter=True)
-            xcorr_a1 = f1.result()
-            xcorr_a2 = f2.result()
+            xcorr_a1, _ = f1.result()
+            xcorr_a2, _ = f2.result()
         if cancel:
             cancel.check()
     else:
@@ -746,6 +758,7 @@ def auto_align_audio(fp1, fp2, track1=0, track2=0,
             "coarse_offset": coarse_offset,
             "segments": [{"v1_start": 0.0, "v1_end": float("inf"),
                           "offset": coarse_offset, "n_inliers": 0}],
+            "warnings": decode_warnings,
         }
 
     t1m = np.array([ts1[g[0]] for g in good])
@@ -846,6 +859,7 @@ def auto_align_audio(fp1, fp2, track1=0, track2=0,
         "residual_end": rend,
         "coarse_offset": coarse_offset,
         "segments": segments,
+        "warnings": decode_warnings,
     }
 
 

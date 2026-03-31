@@ -369,9 +369,6 @@ input[type="checkbox"] { accent-color: var(--ac); }
                     <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
                         <input type="checkbox" id="vocal-filter-cb" checked> Filter vocals (cross-language)
                     </label>
-                    <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
-                        <input type="checkbox" id="fast-decode-cb"> Fast decode (mono ch.1)
-                    </label>
                 </div>
                 <div class="row mt-4">
                     <button class="btn-accent" id="align-btn" onclick="runAlign()" style="flex:1">Auto-Align</button>
@@ -837,13 +834,11 @@ async function runAlign() {
     const t2 = parseInt(document.getElementById('v2-sync-track').value) || 0;
 
     const vocalFilter = document.getElementById('vocal-filter-cb').checked;
-    const fastDecode = document.getElementById('fast-decode-cb').checked;
 
     const result = await apiPost(`/api/session/${_sessionId}/align`, {
         v1_path: state.v1.path, v2_path: state.v2.path,
         v1_track: t1, v2_track: t2,
         vocal_filter: vocalFilter,
-        fast_decode: fastDecode,
     });
 
     if (_viewId !== myView) return;
@@ -868,6 +863,10 @@ async function runAlign() {
             document.getElementById('align-progress').classList.remove('progress-indeterminate');
             if (task.status === 'done') {
                 showAlignResults(task.result);
+                if (task.result.warnings && task.result.warnings.length > 0) {
+                    for (const w of task.result.warnings)
+                        log(`[Align] WARNING: ${w}`);
+                }
                 log(`[Align] Done: ${task.result.inlier_count} inliers, atempo=${task.result.speed_ratio.toFixed(6)}, offset=${task.result.offset.toFixed(3)}s`);
             } else {
                 log(`[Align] ${task.status}: ${task.error || ''}`);
@@ -1726,8 +1725,6 @@ async function switchToSession(sid, sess) {
     if (lastAlignParams) {
         if (lastAlignParams.vocal_filter !== undefined)
             document.getElementById('vocal-filter-cb').checked = !!lastAlignParams.vocal_filter;
-        if (lastAlignParams.fast_decode !== undefined)
-            document.getElementById('fast-decode-cb').checked = !!lastAlignParams.fast_decode;
         if (lastAlignParams.v1_track !== undefined)
             document.getElementById('v1-sync-track').value = lastAlignParams.v1_track;
         if (lastAlignParams.v2_track !== undefined)

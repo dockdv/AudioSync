@@ -59,7 +59,7 @@ class CancelledError(Exception):
     pass
 
 
-def _run(cmd, check=True, timeout=30, cancel=None):
+def _run(cmd, check=True, timeout=30, cancel=None, return_stderr=False):
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             creationflags=_creationflags)
     stdout_buf = []
@@ -117,6 +117,8 @@ def _run(cmd, check=True, timeout=30, cancel=None):
     if check and proc.returncode != 0:
         stderr_str = stderr.decode("utf-8", errors="replace").strip()
         raise RuntimeError(f"{cmd[0]} failed (code {proc.returncode}): {stderr_str}")
+    if return_stderr:
+        return stdout, stderr.decode("utf-8", errors="replace").strip()
     return stdout
 
 
@@ -207,19 +209,14 @@ def get_sample_rate(handle, audio_track_index):
 
 
 def decode_audio(handle, audio_track_index, target_sr, vocal_filter=False,
-                 fast_decode=False, cancel=None):
+                 cancel=None):
     ff = _require_ffmpeg()
-    cmd = [ff, "-v", "quiet",
+    cmd = [ff, "-v", "error",
            "-i", handle,
            "-map", f"0:a:{audio_track_index}"]
 
     if vocal_filter:
-        af = f"bandreject=f=1000:width_type=h:w=2700,aresample={target_sr}"
-        if fast_decode:
-            af = f"pan=mono|c0=c0,{af}"
-        cmd += ["-af", af]
-    elif fast_decode:
-        cmd += ["-af", f"pan=mono|c0=c0,aresample={target_sr}"]
+        cmd += ["-af", f"aformat=channel_layouts=mono,bandreject=f=1000:width_type=h:w=2700,aresample={target_sr}"]
     else:
         cmd += ["-ar", str(target_sr)]
 
@@ -227,10 +224,11 @@ def decode_audio(handle, audio_track_index, target_sr, vocal_filter=False,
             "-f", "f32le",
             "-acodec", "pcm_f32le",
             "pipe:1"]
-    raw = _run(cmd, timeout=3600, cancel=cancel)
+    raw, stderr = _run(cmd, timeout=3600, cancel=cancel, return_stderr=True)
+    warnings = stderr if stderr else None
     if len(raw) == 0:
-        return np.array([], dtype=np.float32)
-    return np.frombuffer(raw, dtype=np.float32).copy()
+        return np.array([], dtype=np.float32), warnings
+    return np.frombuffer(raw, dtype=np.float32).copy(), warnings
 
 
 FRAME_W, FRAME_H = 160, 120
