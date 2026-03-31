@@ -421,6 +421,9 @@ input[type="checkbox"] { accent-color: var(--ac); }
                         <input type="radio" name="container-fmt" value="keep" onchange="onContainerChange()"> Keep original
                     </label>
                 </div>
+                <div class="row" style="margin-bottom:4px">
+                    <button class="btn-blue btn-sm" onclick="openDefaultAudioEditor()" style="flex:1">Default Audio Track...</button>
+                </div>
                 <div class="row">
                     <button class="btn-green" id="merge-btn" onclick="runMerge()" style="flex:1">Run Merge</button>
                     <button class="btn-red hidden" id="merge-stop" onclick="cancelRunningTask()">Stop</button>
@@ -451,6 +454,7 @@ const state = {
     v1StreamSelected: {},
     v2Selected: {},
     trackOverrides: {},
+    defaultAudioIdx: null,
     mergeParams: null,
     segments: null,
     containerChange: false,
@@ -946,8 +950,16 @@ function prepareMerge(atempo, offset, v2Indices) {
         const ovr = state.trackOverrides[key] || {};
         metadata.push({ language: ovr.language || s.language || 'und', title: ovr.title !== undefined ? ovr.title : (s.title || '') });
     }
+    const sub_metadata = [];
+    for (const s of state.v1.streams || []) {
+        if (s.codec_type !== 'subtitle') continue;
+        if (!state.v1StreamSelected[s.stream_index]) continue;
+        const key = `v1_sub_s${s.stream_index}`;
+        const ovr = state.trackOverrides[key] || {};
+        sub_metadata.push({ language: ovr.language || s.language || 'und', title: ovr.title !== undefined ? ovr.title : (s.title || '') });
+    }
     if (isRemuxMode()) {
-        const params = { v1_path: v1, out_path: outPath, v1_stream_indices: v1StreamIndices, v1_duration: state.v1.duration, metadata };
+        const params = { v1_path: v1, out_path: outPath, v1_stream_indices: v1StreamIndices, v1_duration: state.v1.duration, metadata, sub_metadata, default_audio: state.defaultAudioIdx };
         state.mergeParams = params;
         log(`[Remux] Ready \u2192 ${basename(outPath)}`);
         return;
@@ -958,7 +970,7 @@ function prepareMerge(atempo, offset, v2Indices) {
         const t = (state.v2.tracks || []).find(t => t.index === tidx) || {};
         metadata.push({ language: ovr.language || t.language || 'und', title: ovr.title !== undefined ? ovr.title : (t.title || '') });
     }
-    const params = { v1_path: v1, v2_path: v2, out_path: outPath, atempo, offset, v1_n_audio: nV1Audio, v1_stream_indices: v1StreamIndices, v2_indices: v2Indices, v1_duration: state.v1.duration, metadata };
+    const params = { v1_path: v1, v2_path: v2, out_path: outPath, atempo, offset, v1_n_audio: nV1Audio, v1_stream_indices: v1StreamIndices, v2_indices: v2Indices, v1_duration: state.v1.duration, metadata, sub_metadata, default_audio: state.defaultAudioIdx };
     if (state.segments && state.segments.length > 1) {
         params.segments = state.segments;
     }
@@ -1368,22 +1380,40 @@ function openMetadataEditor(which) {
     let html = `<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:20px;min-width:500px;max-width:700px;max-height:80vh;overflow-y:auto;">`;
     const title = which === 'v1' ? 'Video 1 Track Metadata' : 'Video 2 Track Metadata';
     html += `<h3 style="color:var(--ac);margin-bottom:12px;">${title}</h3>`;
-    html += `<p style="color:var(--dim);font-size:12px;margin-bottom:12px;">Edit language and title for audio tracks.</p>`;
+    html += `<p style="color:var(--dim);font-size:12px;margin-bottom:12px;">Edit language and title for ${which === 'v1' ? 'audio and subtitle' : 'audio'} tracks.</p>`;
 
     if (which === 'v1') {
         const v1AudioStreams = (state.v1.streams || []).filter(s =>
             s.codec_type === 'audio' && state.v1StreamSelected[s.stream_index]
         );
-        if (!v1AudioStreams.length) { alert('No V1 audio tracks selected.'); return; }
-        v1AudioStreams.forEach((s, i) => {
-            const key = `v1_s${s.stream_index}`, ovr = state.trackOverrides[key] || {};
-            const curLang = ovr.language || s.language || 'und';
-            const curTitle = ovr.title !== undefined ? ovr.title : (s.title || '');
-            const lbl = escapeHtml(streamLabel(s));
-            html += `<div class="row" style="margin:3px 0;"><span style="font-family:Consolas;font-size:11px;min-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${lbl}</span>`;
-            html += `<select class="meta-lang" data-key="${key}" style="width:150px;font-size:11px;">${buildLangOptions(curLang)}</select>`;
-            html += `<input type="text" class="meta-title" data-key="${key}" value="${escapeHtml(curTitle)}" style="width:160px;font-size:11px;" placeholder="Title"></div>`;
-        });
+        const v1SubStreams = (state.v1.streams || []).filter(s =>
+            s.codec_type === 'subtitle' && state.v1StreamSelected[s.stream_index]
+        );
+        if (!v1AudioStreams.length && !v1SubStreams.length) { alert('No V1 tracks selected.'); return; }
+        if (v1AudioStreams.length) {
+            html += `<p style="color:var(--dim);font-size:11px;margin:8px 0 4px;font-weight:600;">Audio</p>`;
+            v1AudioStreams.forEach((s, i) => {
+                const key = `v1_s${s.stream_index}`, ovr = state.trackOverrides[key] || {};
+                const curLang = ovr.language || s.language || 'und';
+                const curTitle = ovr.title !== undefined ? ovr.title : (s.title || '');
+                const lbl = escapeHtml(streamLabel(s));
+                html += `<div class="row" style="margin:3px 0;"><span style="font-family:Consolas;font-size:11px;min-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${lbl}</span>`;
+                html += `<select class="meta-lang" data-key="${key}" style="width:150px;font-size:11px;">${buildLangOptions(curLang)}</select>`;
+                html += `<input type="text" class="meta-title" data-key="${key}" value="${escapeHtml(curTitle)}" style="width:160px;font-size:11px;" placeholder="Title"></div>`;
+            });
+        }
+        if (v1SubStreams.length) {
+            html += `<p style="color:var(--dim);font-size:11px;margin:8px 0 4px;font-weight:600;">Subtitles</p>`;
+            v1SubStreams.forEach((s, i) => {
+                const key = `v1_sub_s${s.stream_index}`, ovr = state.trackOverrides[key] || {};
+                const curLang = ovr.language || s.language || 'und';
+                const curTitle = ovr.title !== undefined ? ovr.title : (s.title || '');
+                const lbl = escapeHtml(streamLabel(s));
+                html += `<div class="row" style="margin:3px 0;"><span style="font-family:Consolas;font-size:11px;min-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${lbl}</span>`;
+                html += `<select class="meta-lang" data-key="${key}" style="width:150px;font-size:11px;">${buildLangOptions(curLang)}</select>`;
+                html += `<input type="text" class="meta-title" data-key="${key}" value="${escapeHtml(curTitle)}" style="width:160px;font-size:11px;" placeholder="Title"></div>`;
+            });
+        }
     } else {
         const v2Indices = getV2Indices();
         const v2Filtered = state.v2.tracks.filter(t => v2Indices.includes(t.index));
@@ -1417,7 +1447,11 @@ function openMetadataEditor(which) {
         overlay.querySelectorAll('.meta-lang').forEach(sel => {
             const key = sel.dataset.key;
             let origLang = 'und';
-            if (key.startsWith('v1_s')) {
+            if (key.startsWith('v1_sub_s')) {
+                const si = parseInt(key.substring(8));
+                const stream = (state.v1.streams || []).find(s => s.stream_index === si);
+                if (stream) origLang = stream.language || 'und';
+            } else if (key.startsWith('v1_s')) {
                 const si = parseInt(key.substring(4));
                 const stream = (state.v1.streams || []).find(s => s.stream_index === si);
                 if (stream) origLang = stream.language || 'und';
@@ -1431,7 +1465,11 @@ function openMetadataEditor(which) {
         overlay.querySelectorAll('.meta-title').forEach(inp => {
             const key = inp.dataset.key;
             let origTitle = '';
-            if (key.startsWith('v1_s')) {
+            if (key.startsWith('v1_sub_s')) {
+                const si = parseInt(key.substring(8));
+                const stream = (state.v1.streams || []).find(s => s.stream_index === si);
+                if (stream) origTitle = stream.title || '';
+            } else if (key.startsWith('v1_s')) {
                 const si = parseInt(key.substring(4));
                 const stream = (state.v1.streams || []).find(s => s.stream_index === si);
                 if (stream) origTitle = stream.title || '';
@@ -1472,6 +1510,62 @@ function openMetadataEditor(which) {
         const off = parseFloat(document.getElementById('offset-input').value);
         if (!isNaN(at) && !isNaN(off)) prepareMerge(at, off, getV2Indices());
         log(`[Metadata] Updated ${Object.keys(state.trackOverrides).length} track(s)`);
+    });
+}
+
+function openDefaultAudioEditor() {
+    const remux = isRemuxMode();
+    const audioTracks = [];
+    const selectedIndices = new Set(getV1StreamIndices());
+    for (const s of state.v1.streams || []) {
+        if (s.codec_type !== 'audio' || !selectedIndices.has(s.stream_index)) continue;
+        const key = `v1_s${s.stream_index}`;
+        const ovr = state.trackOverrides[key] || {};
+        const lang = ovr.language || s.language || 'und';
+        const title = ovr.title !== undefined ? ovr.title : (s.title || '');
+        const langStr = lang && LANG_NAMES[lang] ? LANG_NAMES[lang] : lang;
+        const titleStr = title ? ` "${title}"` : '';
+        audioTracks.push({ label: `V1 ${streamLabel(s)}${titleStr}`, idx: audioTracks.length });
+    }
+    if (!remux) {
+        const v2Indices = getV2Indices();
+        for (const tidx of v2Indices) {
+            const key = `v2_${tidx}`;
+            const ovr = state.trackOverrides[key] || {};
+            const t = (state.v2.tracks || []).find(t => t.index === tidx) || {};
+            const lang = ovr.language || t.language || 'und';
+            const title = ovr.title !== undefined ? ovr.title : (t.title || '');
+            const titleStr = title ? ` "${title}"` : '';
+            audioTracks.push({ label: `V2 ${t.label || '?'}${titleStr}`, idx: audioTracks.length });
+        }
+    }
+    if (!audioTracks.length) { alert('No audio tracks selected.'); return; }
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center;';
+    let html = `<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:20px;min-width:400px;max-width:600px;max-height:80vh;overflow-y:auto;">`;
+    html += `<h3 style="color:var(--ac);margin-bottom:12px;">Default Audio Track</h3>`;
+    html += `<p style="color:var(--dim);font-size:12px;margin-bottom:12px;">Select which audio track should be marked as default in the output.</p>`;
+
+    audioTracks.forEach(t => {
+        const checked = (state.defaultAudioIdx === t.idx) ? ' checked' : (state.defaultAudioIdx === null && t.idx === 0 ? ' checked' : '');
+        html += `<label style="display:flex;align-items:center;gap:8px;margin:4px 0;cursor:pointer;font-family:Consolas;font-size:11px;">`;
+        html += `<input type="radio" name="default-audio" value="${t.idx}"${checked}>`;
+        html += `${escapeHtml(t.label)}</label>`;
+    });
+
+    html += `<div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;">`;
+    html += `<button onclick="this.closest('div[style*=fixed]').remove()">Cancel</button>`;
+    html += `<button class="btn-green" id="default-audio-ok-btn">OK</button></div></div>`;
+    overlay.innerHTML = html;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+    document.getElementById('default-audio-ok-btn').addEventListener('click', () => {
+        const sel = overlay.querySelector('input[name="default-audio"]:checked');
+        state.defaultAudioIdx = sel ? parseInt(sel.value) : 0;
+        overlay.remove();
+        log(`[Default Audio] Track ${state.defaultAudioIdx} selected as default`);
     });
 }
 

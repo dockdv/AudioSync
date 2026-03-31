@@ -177,6 +177,8 @@ def remux_with_ffmpeg(v1_path, out_path,
                       v1_stream_indices=None,
                       v1_duration=0,
                       ffmpeg_path=None, metadata_args=None,
+                      sub_metadata_args=None,
+                      default_audio=None,
                       progress_cb=None, cancel=None):
     if not ffmpeg_path:
         ffmpeg_path = find_ffmpeg_binary()
@@ -230,6 +232,13 @@ def remux_with_ffmpeg(v1_path, out_path,
                     cmd += [f"-metadata:s:a:{audio_idx}", f"title={title}"]
                     audio_idx += 1
 
+        if default_audio is not None:
+            n_audio = sum(1 for si in non_sub
+                          if v1_stream_types.get(si) == "audio")
+            for i in range(n_audio):
+                disp = "default" if i == default_audio else "0"
+                cmd += [f"-disposition:a:{i}", disp]
+
         if v1_dur > 0:
             cmd += ["-t", f"{v1_dur:.6f}"]
 
@@ -251,6 +260,13 @@ def remux_with_ffmpeg(v1_path, out_path,
                 cmd += ["-map", f"1:{si}"]
 
             cmd += ["-c", "copy"]
+
+            if sub_metadata_args:
+                for i, meta in enumerate(sub_metadata_args):
+                    lang = meta.get("language") or ""
+                    title = meta.get("title") or ""
+                    cmd += [f"-metadata:s:s:{i}", f"language={lang}"]
+                    cmd += [f"-metadata:s:s:{i}", f"title={title}"]
 
             if v1_dur > 0:
                 cmd += ["-t", f"{v1_dur:.6f}"]
@@ -275,6 +291,8 @@ def merge_with_ffmpeg(v1_path, v2_path, out_path, atempo, offset,
                       segments=None,
                       v1_stream_indices=None,
                       ffmpeg_path=None, metadata_args=None,
+                      sub_metadata_args=None,
+                      default_audio=None,
                       progress_cb=None, cancel=None):
     if not ffmpeg_path:
         ffmpeg_path = find_ffmpeg_binary()
@@ -315,12 +333,14 @@ def merge_with_ffmpeg(v1_path, v2_path, out_path, atempo, offset,
         _merge_pass2_mux(ffmpeg_path, v1_path, tmp_audio, mux_target,
                          v1_n_audio, v2_indices, v1_dur,
                          v1_stream_indices, metadata_args,
-                         progress_cb, cancel, skip_subs=has_subs)
+                         progress_cb, cancel, skip_subs=has_subs,
+                         default_audio=default_audio)
 
         if has_subs:
             _merge_pass3_subs(ffmpeg_path, mux_target, v1_path, out_path,
                               v1_sub, v1_dur,
-                              progress_cb, cancel)
+                              progress_cb, cancel,
+                              sub_metadata_args=sub_metadata_args)
     finally:
         for tmp in (tmp_audio, tmp_nosubs):
             if os.path.isfile(tmp):
@@ -441,7 +461,8 @@ def _merge_pass1_audio(ffmpeg_path, v2_path, tmp_audio, atempo, offset,
 def _merge_pass2_mux(ffmpeg_path, v1_path, tmp_audio, out_path,
                      v1_n_audio, v2_indices, v1_dur,
                      v1_stream_indices, metadata_args,
-                     progress_cb, cancel, skip_subs=False):
+                     progress_cb, cancel, skip_subs=False,
+                     default_audio=None):
     if progress_cb:
         progress_cb("status", "Pass 2: muxing...")
 
@@ -489,6 +510,12 @@ def _merge_pass2_mux(ffmpeg_path, v1_path, tmp_audio, out_path,
             cmd += [f"-metadata:s:a:{i}", f"language={lang}"]
             cmd += [f"-metadata:s:a:{i}", f"title={title}"]
 
+    if default_audio is not None:
+        n_audio = len(v1_aud) + len(v2_indices)
+        for i in range(n_audio):
+            disp = "default" if i == default_audio else "0"
+            cmd += [f"-disposition:a:{i}", disp]
+
     if v1_dur > 0:
         cmd += ["-t", f"{v1_dur:.6f}"]
 
@@ -499,7 +526,8 @@ def _merge_pass2_mux(ffmpeg_path, v1_path, tmp_audio, out_path,
 
 def _merge_pass3_subs(ffmpeg_path, nosubs_path, v1_path, out_path,
                       v1_sub_indices, v1_dur,
-                      progress_cb, cancel):
+                      progress_cb, cancel,
+                      sub_metadata_args=None):
     if progress_cb:
         progress_cb("status", "Pass 3: adding subtitles...")
 
@@ -512,6 +540,13 @@ def _merge_pass3_subs(ffmpeg_path, nosubs_path, v1_path, out_path,
         cmd += ["-map", f"1:{si}"]
 
     cmd += ["-c", "copy"]
+
+    if sub_metadata_args:
+        for i, meta in enumerate(sub_metadata_args):
+            lang = meta.get("language") or ""
+            title = meta.get("title") or ""
+            cmd += [f"-metadata:s:s:{i}", f"language={lang}"]
+            cmd += [f"-metadata:s:s:{i}", f"title={title}"]
 
     if v1_dur > 0:
         cmd += ["-t", f"{v1_dur:.6f}"]

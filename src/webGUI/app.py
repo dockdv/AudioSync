@@ -334,6 +334,8 @@ def api_merge(sid):
     v2_indices = data.get("v2_indices", [0])
     v1_duration = data.get("v1_duration", 0)
     metadata = data.get("metadata", [])
+    sub_metadata = data.get("sub_metadata", [])
+    default_audio = data.get("default_audio", None)
     segments = data.get("segments", None)
 
     if not v1 or not os.path.isfile(v1):
@@ -349,6 +351,7 @@ def api_merge(sid):
         "v1_n_audio": v1_n_audio, "v1_stream_indices": v1_stream_indices,
         "v2_indices": v2_indices,
         "v1_duration": v1_duration, "metadata": metadata,
+        "sub_metadata": sub_metadata, "default_audio": default_audio,
         "segments": segments,
     })
     if err:
@@ -369,6 +372,8 @@ def api_merge(sid):
                 segments=segments,
                 v1_stream_indices=v1_stream_indices,
                 metadata_args=metadata,
+                sub_metadata_args=sub_metadata,
+                default_audio=default_audio,
                 progress_cb=progress_cb, cancel=cancel,
             )
             elapsed = time.monotonic() - t0
@@ -404,6 +409,8 @@ def api_remux(sid):
     v1_stream_indices = data.get("v1_stream_indices", None)
     v1_duration = data.get("v1_duration", 0)
     metadata = data.get("metadata", [])
+    sub_metadata = data.get("sub_metadata", [])
+    default_audio = data.get("default_audio", None)
 
     if not v1 or not os.path.isfile(v1):
         return jsonify({"error": f"V1 not found: {v1}"}), 400
@@ -414,6 +421,7 @@ def api_remux(sid):
         "v1_path": v1, "out_path": out,
         "v1_stream_indices": v1_stream_indices,
         "v1_duration": v1_duration, "metadata": metadata,
+        "sub_metadata": sub_metadata, "default_audio": default_audio,
     })
     if err:
         return jsonify({"error": err}), 409
@@ -430,6 +438,8 @@ def api_remux(sid):
                 v1_stream_indices=v1_stream_indices,
                 v1_duration=v1_duration,
                 metadata_args=metadata,
+                sub_metadata_args=sub_metadata,
+                default_audio=default_audio,
                 progress_cb=progress_cb, cancel=cancel,
             )
             elapsed = time.monotonic() - t0
