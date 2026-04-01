@@ -14,7 +14,7 @@ from audio import (
     extract_band_peak_fingerprints, match_fingerprints,
     mutual_nearest_neighbors, downsample_audio, filter_matches_by_offset,
     ransac_linear_fit, residual_stats, xcorr_on_downsampled,
-    detect_segments, snap_speed_to_candidate,
+    detect_segments, snap_speed_to_candidate, compute_lufs,
 )
 from visual import (
     verify_offset_visual, refine_boundary_visual,
@@ -75,6 +75,9 @@ def auto_align_audio(fp1, fp2, track1=0, track2=0,
         decode_warnings.append(f"V1: {m}")
     for m in (msgs2 or []):
         decode_warnings.append(f"V2: {m}")
+
+    v1_lufs = compute_lufs(audio1, AUDIO_SAMPLE_RATE)
+    v2_lufs = compute_lufs(audio2, AUDIO_SAMPLE_RATE)
 
     if progress_cb:
         progress_cb("status", "Band-peak FP: V1...")
@@ -385,6 +388,8 @@ def auto_align_audio(fp1, fp2, track1=0, track2=0,
         "visual_speed": visual_result["speed"] if visual_corrected else None,
         "visual_score": visual_result["score"] if visual_corrected else None,
         "audio_visual_score": visual_result.get("audio_score") if visual_corrected else None,
+        "v1_lufs": v1_lufs,
+        "v2_lufs": v2_lufs,
     }
 
 

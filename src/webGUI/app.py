@@ -396,6 +396,10 @@ def api_merge(sid):
     default_audio = data.get("default_audio", None)
     audio_order = data.get("audio_order", None)
     segments = data.get("segments", None)
+    gain_match = data.get("gain_match", False)
+    v1_sync_track = data.get("v1_sync_track", 0)
+    v1_lufs = data.get("v1_lufs", None)
+    v2_lufs = data.get("v2_lufs", None)
 
     if not v1 or not os.path.isfile(v1):
         return jsonify({"error": f"V1 not found: {v1}"}), 400
@@ -412,6 +416,8 @@ def api_merge(sid):
         "v1_duration": v1_duration, "metadata": metadata,
         "sub_metadata": sub_metadata, "default_audio": default_audio,
         "audio_order": audio_order, "segments": segments,
+        "gain_match": gain_match, "v1_sync_track": v1_sync_track,
+        "v1_lufs": v1_lufs, "v2_lufs": v2_lufs,
     })
     if err:
         return jsonify({"error": err}), 409
@@ -435,6 +441,8 @@ def api_merge(sid):
                 default_audio=default_audio,
                 audio_order=audio_order,
                 progress_cb=progress_cb, cancel=cancel,
+                gain_match=gain_match, v1_sync_track=v1_sync_track,
+                v1_lufs=v1_lufs, v2_lufs=v2_lufs,
             )
             elapsed = time.monotonic() - t0
             mins, secs = divmod(int(elapsed), 60)

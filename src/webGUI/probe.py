@@ -62,6 +62,7 @@ def probe_full(filepath):
                 "index": i, "stream_index": a.get("stream_index", i),
                 "label": lbl, "language": lang,
                 "title": a.get("title", ""),
+                "codec": codec, "channels": ch, "sample_rate": sr,
             })
         if tracks:
             return tracks, streams, duration, "libav", ""

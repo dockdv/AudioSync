@@ -419,6 +419,11 @@ input[type="checkbox"] { accent-color: var(--ac); }
                         <input type="radio" name="container-fmt" value="keep" onchange="onContainerChange()"> Keep original
                     </label>
                 </div>
+                <div class="row" style="gap:12px;margin-bottom:6px">
+                    <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
+                        <input type="checkbox" id="gain-match-cb" onchange="saveUIState()"> Match V2 loudness to V1
+                    </label>
+                </div>
                 <div class="row" style="margin-bottom:4px">
                     <button class="btn-blue btn-sm" onclick="openDefaultAudioEditor()" style="flex:1">Default Audio Track...</button>
                 </div>
@@ -488,6 +493,9 @@ function saveUIState() {
             v1_sync_track: document.getElementById('v1-sync-track').value,
             v2_sync_track: document.getElementById('v2-sync-track').value,
             segments: state.segments,
+            gain_match: document.getElementById('gain-match-cb').checked,
+            v1_lufs: state.v1Lufs,
+            v2_lufs: state.v2Lufs,
         };
         if (_sessionCache[_sessionId]) {
             _sessionCache[_sessionId].ui_state = { ...uiState };
@@ -941,6 +949,12 @@ function showAlignResults(r) {
     const ni = r.inlier_count, nt = r.total_candidates;
     const st = r.sync_tracks || [0, 0];
 
+    state.v1Lufs = r.v1_lufs ?? null;
+    state.v2Lufs = r.v2_lufs ?? null;
+    if (state.v1Lufs != null && state.v2Lufs != null) {
+        log(`[Align] Loudness: V1=${state.v1Lufs.toFixed(1)} LUFS, V2=${state.v2Lufs.toFixed(1)} LUFS (delta=${(state.v1Lufs - state.v2Lufs).toFixed(1)} dB)`);
+    }
+
     document.getElementById('atempo-input').value = at.toFixed(6);
     document.getElementById('offset-input').value = off.toFixed(3);
 
@@ -1078,7 +1092,9 @@ function prepareMerge(atempo, offset, v2Indices) {
         metadata.push({ language: ovr.language || t.language || 'und', title: ovr.title !== undefined ? ovr.title : (t.title || '') });
     }
     const { sorted: sortedMeta, order: audioOrder } = reorderAudioTracks(metadata, state.defaultAudioIdx);
-    const params = { v1_path: v1, v2_path: v2, out_path: outPath, atempo, offset, v1_n_audio: nV1Audio, v1_stream_indices: v1StreamIndices, v2_indices: v2Indices, v1_duration: state.v1.duration, metadata: sortedMeta, sub_metadata, default_audio: 0, audio_order: audioOrder };
+    const gainMatch = document.getElementById('gain-match-cb').checked;
+    const v1SyncTrack = parseInt(document.getElementById('v1-sync-track').value) || 0;
+    const params = { v1_path: v1, v2_path: v2, out_path: outPath, atempo, offset, v1_n_audio: nV1Audio, v1_stream_indices: v1StreamIndices, v2_indices: v2Indices, v1_duration: state.v1.duration, metadata: sortedMeta, sub_metadata, default_audio: 0, audio_order: audioOrder, gain_match: gainMatch, v1_sync_track: v1SyncTrack, v1_lufs: state.v1Lufs, v2_lufs: state.v2Lufs };
     if (state.segments && state.segments.length > 1) {
         params.segments = state.segments;
     }
@@ -1635,9 +1651,9 @@ function openDefaultAudioEditor() {
         const ovr = state.trackOverrides[key] || {};
         const lang = ovr.language || s.language || 'und';
         const title = ovr.title !== undefined ? ovr.title : (s.title || '');
-        const langStr = lang && LANG_NAMES[lang] ? LANG_NAMES[lang] : lang;
+        const langTag = lang && lang !== 'und' ? `[${lang}]` : '';
         const titleStr = title ? ` "${title}"` : '';
-        audioTracks.push({ label: `V1 ${streamLabel(s)}${titleStr}`, idx: audioTracks.length });
+        audioTracks.push({ label: `V1 #${s.stream_index} audio: ${langTag} ${s.codec || '?'}, ${s.channels || '?'}ch, ${s.sample_rate || '?'}Hz${titleStr}`, idx: audioTracks.length });
     }
     if (!remux) {
         const v2Indices = getV2Indices();
@@ -1647,8 +1663,9 @@ function openDefaultAudioEditor() {
             const t = (state.v2.tracks || []).find(t => t.index === tidx) || {};
             const lang = ovr.language || t.language || 'und';
             const title = ovr.title !== undefined ? ovr.title : (t.title || '');
+            const langTag = lang && lang !== 'und' ? `[${lang}]` : '';
             const titleStr = title ? ` "${title}"` : '';
-            audioTracks.push({ label: `V2 ${t.label || '?'}${titleStr}`, idx: audioTracks.length });
+            audioTracks.push({ label: `V2 Track ${tidx}: ${langTag} ${t.codec || '?'}, ${t.channels || '?'}ch, ${t.sample_rate || '?'}Hz${titleStr}`, idx: audioTracks.length });
         }
     }
     if (!audioTracks.length) { alert('No audio tracks selected.'); return; }
@@ -1815,6 +1832,10 @@ async function switchToSession(sid, sess) {
     // Vocal filter & sync tracks
     if (ui.vocal_filter !== undefined)
         document.getElementById('vocal-filter-cb').checked = ui.vocal_filter;
+    if (ui.gain_match !== undefined)
+        document.getElementById('gain-match-cb').checked = ui.gain_match;
+    if (ui.v1_lufs !== undefined) state.v1Lufs = ui.v1_lufs;
+    if (ui.v2_lufs !== undefined) state.v2Lufs = ui.v2_lufs;
     if (ui.v1_sync_track !== undefined)
         document.getElementById('v1-sync-track').value = ui.v1_sync_track;
     if (ui.v2_sync_track !== undefined)

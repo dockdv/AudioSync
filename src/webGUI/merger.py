@@ -38,11 +38,12 @@ def _atempo_chain(atempo):
 
 
 def _build_piecewise_filter(atempo, segments, v1_sr, v1_dur,
-                            v2_track=0, input_base=1):
+                            v2_track=0, input_base=1, gain_db=None):
     n = len(segments)
     tempo_parts = _atempo_chain(atempo)
     tempo_chain = ",".join(tempo_parts) if tempo_parts else ""
-    base_filters = ",".join(f for f in [tempo_chain, f"aresample={v1_sr}"] if f)
+    gain_filter = f"volume={gain_db:.2f}dB" if gain_db is not None and abs(gain_db) > 0.01 else ""
+    base_filters = ",".join(f for f in [tempo_chain, f"aresample={v1_sr}", gain_filter] if f)
 
     lines = []
     seg_labels = []
@@ -302,7 +303,9 @@ def merge_with_ffmpeg(v1_path, v2_path, out_path, atempo, offset,
                       sub_metadata_args=None,
                       default_audio=None,
                       audio_order=None,
-                      progress_cb=None, cancel=None):
+                      progress_cb=None, cancel=None,
+                      gain_match=False, v1_sync_track=0,
+                      v1_lufs=None, v2_lufs=None):
     if not ffmpeg_path:
         ffmpeg_path = find_ffmpeg_binary()
     if not ffmpeg_path:
@@ -334,10 +337,19 @@ def merge_with_ffmpeg(v1_path, v2_path, out_path, atempo, offset,
                   if v1_stream_types[si] == "subtitle"]
     has_subs = len(v1_sub) > 0
 
+    v2_gains = None
+    if gain_match and v1_lufs is not None and v2_lufs is not None:
+        gain = max(-20.0, min(20.0, v1_lufs - v2_lufs))
+        if abs(gain) > 0.01:
+            v2_gains = {tidx: gain for tidx in v2_indices}
+            if progress_cb:
+                progress_cb("status",
+                            f"Gain match: V1={v1_lufs:.1f} LUFS, V2={v2_lufs:.1f} LUFS → {gain:+.1f} dB")
+
     try:
         _merge_pass1_audio(ffmpeg_path, v2_path, tmp_audio, atempo, offset,
                            v2_indices, v1_sr, v1_dur, segments, use_piecewise,
-                           progress_cb, cancel)
+                           progress_cb, cancel, v2_gains=v2_gains)
 
         mux_target = tmp_nosubs if has_subs else out_path
         _merge_pass2_mux(ffmpeg_path, v1_path, tmp_audio, mux_target,
@@ -398,7 +410,7 @@ def _pick_aac_bitrate(source_br):
 
 def _merge_pass1_audio(ffmpeg_path, v2_path, tmp_audio, atempo, offset,
                        v2_indices, v1_sr, v1_dur, segments, use_piecewise,
-                       progress_cb, cancel):
+                       progress_cb, cancel, v2_gains=None):
     if progress_cb:
         progress_cb("status", "Pass 1: encoding audio...")
 
@@ -411,9 +423,11 @@ def _merge_pass1_audio(ffmpeg_path, v2_path, tmp_audio, atempo, offset,
         output_labels = []
         running_base = 0
         for i, tidx in enumerate(v2_indices):
+            track_gain = (v2_gains or {}).get(tidx)
             fg, out_label, n_inputs = _build_piecewise_filter(
                 atempo, segments, v1_sr, v1_dur,
-                v2_track=tidx, input_base=running_base)
+                v2_track=tidx, input_base=running_base,
+                gain_db=track_gain)
             if len(v2_indices) > 1:
                 fg = fg.replace("[_", f"[_t{i}_")
                 out_label = out_label.replace("[_", f"[_t{i}_")
@@ -450,6 +464,9 @@ def _merge_pass1_audio(ffmpeg_path, v2_path, tmp_audio, atempo, offset,
                 delay_ms = int(round(offset * 1000))
                 filters.append(f"adelay={delay_ms}:all=1")
             filters.append(f"aresample={v1_sr}")
+            track_gain = (v2_gains or {}).get(tidx)
+            if track_gain is not None and abs(track_gain) > 0.01:
+                filters.append(f"volume={track_gain:.2f}dB")
             if v1_dur > 0:
                 filters.append(f"apad=whole_dur={v1_dur:.6f}")
             filter_str = ",".join(filters)
