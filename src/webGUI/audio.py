@@ -15,8 +15,6 @@ AUDIO_RANSAC_THRESHOLD_SEC = 0.3
 
 AUDIO_XCORR_WINDOW_SEC = 10.0
 
-AUDIO_N_COARSE_BANDS = 128
-AUDIO_COARSE_N_PEAKS = 15
 
 SPEED_CANDIDATES = [
     23.976 / 25.0,
@@ -31,6 +29,10 @@ SPEED_CANDIDATES = [
 XCORR_DOWNSAMPLE_RATE = 100
 
 SPEED_SNAP_TOLERANCE = 0.005
+
+AUDIO_N_MELS = 128
+DTW_BAND_SEC = 60.0
+DTW_MIN_SEGMENT_SEC = 120.0
 
 
 def compute_lufs(samples, sr):
@@ -71,14 +73,14 @@ def compute_lufs(samples, sr):
 
 
 def decode_full_audio(filepath, track_index, sr, cancel=None,
-                      vocal_filter=False):
+                      vocal_filter=False, duration=0):
     audio, warnings = fflib.decode_audio(filepath, track_index, sr,
                                          vocal_filter=vocal_filter,
                                          cancel=cancel)
     if len(audio) == 0:
         raise RuntimeError("No audio data decoded")
     decoded_dur = len(audio) / sr
-    expected_dur = get_duration(filepath)
+    expected_dur = duration if duration > 0 else get_duration(filepath)
     msgs = []
     if warnings:
         msgs.append(f"FFmpeg: {warnings}")
@@ -88,6 +90,60 @@ def decode_full_audio(filepath, track_index, sr, cancel=None,
     return audio, msgs
 
 
+def _extract_fingerprints(filepath, track_index, max_samples, hop_sec,
+                          window_sec, sr, frame_fn, label,
+                          progress_cb, cancel, audio_data, duration):
+    if duration <= 0:
+        duration = get_duration(filepath)
+    if duration <= 0:
+        duration = 300.0
+    needed_samples = int(duration / hop_sec) + 1
+    if needed_samples > max_samples:
+        hop_sec = duration / max_samples
+
+    window_samples = int(window_sec * sr)
+    hop_samples = int(hop_sec * sr)
+    hann = np.hanning(window_samples).astype(np.float32)
+
+    if audio_data is not None:
+        audio = audio_data
+    else:
+        audio, _ = decode_full_audio(filepath, track_index, sr, cancel)
+    if len(audio) < window_samples:
+        raise RuntimeError("Could not extract enough audio data")
+
+    if progress_cb:
+        progress_cb(0, max_samples)
+
+    timestamps, fingerprints = [], []
+    pos = 0
+    count = 0
+    total_possible = min(max_samples,
+                         (len(audio) - window_samples) // hop_samples + 1)
+
+    while pos + window_samples <= len(audio) and count < max_samples:
+        if cancel and count % 200 == 0:
+            cancel.check()
+        frame = audio[pos:pos + window_samples] * hann
+        spectrum = np.abs(np.fft.rfft(frame))
+        fp = frame_fn(spectrum)
+        norm = np.linalg.norm(fp)
+        if norm > 0:
+            fp /= norm
+        timestamps.append(pos / sr)
+        fingerprints.append(fp)
+        pos += hop_samples
+        count += 1
+        if progress_cb and count % 500 == 0:
+            progress_cb(count, total_possible)
+
+    if progress_cb:
+        progress_cb(count, count)
+    if count < 10:
+        raise RuntimeError(f"Only {count} {label} fingerprints extracted")
+    return np.array(timestamps), np.array(fingerprints)
+
+
 def extract_audio_fingerprints(filepath, track_index=0,
                                 max_samples=AUDIO_MAX_SAMPLES,
                                 hop_sec=AUDIO_HOP_SEC,
@@ -95,158 +151,71 @@ def extract_audio_fingerprints(filepath, track_index=0,
                                 sr=AUDIO_SAMPLE_RATE,
                                 progress_cb=None, cancel=None,
                                 audio_data=None, duration=0):
-    if duration <= 0:
-        duration = get_duration(filepath)
-    if duration <= 0:
-        duration = 300.0
-    needed_samples = int(duration / hop_sec) + 1
-    if needed_samples > max_samples:
-        hop_sec = duration / max_samples
-
     window_samples = int(window_sec * sr)
-    hop_samples = int(hop_sec * sr)
-    n_bands = AUDIO_N_BANDS
-
-    hann = np.hanning(window_samples).astype(np.float32)
     n_fft_bins = window_samples // 2 + 1
+    n_bands = AUDIO_N_BANDS
     min_bin = max(1, int(60.0 / (sr / window_samples)))
     band_edges = np.logspace(
         np.log10(min_bin), np.log10(n_fft_bins - 1),
         n_bands + 1
     ).astype(int)
     band_edges = np.clip(band_edges, 0, n_fft_bins - 1)
-
     safe_edges = band_edges.copy()
     safe_edges[1:] = np.maximum(safe_edges[1:], safe_edges[:-1] + 1)
     band_widths = np.diff(safe_edges).astype(np.float32)
 
-    if audio_data is not None:
-        audio = audio_data
-    else:
-        audio, _ = decode_full_audio(filepath, track_index, sr, cancel)
-    if len(audio) < window_samples:
-        raise RuntimeError("Could not extract enough audio data")
-
-    if progress_cb:
-        progress_cb(0, max_samples)
-
-    timestamps, fingerprints = [], []
-    pos = 0
-    count = 0
-    total_possible = min(max_samples,
-                         (len(audio) - window_samples) // hop_samples + 1)
-
-    while pos + window_samples <= len(audio) and count < max_samples:
-        if cancel and count % 200 == 0:
-            cancel.check()
-        frame = audio[pos:pos + window_samples] * hann
-        spectrum = np.abs(np.fft.rfft(frame))
+    def frame_fn(spectrum):
         band_sums = np.add.reduceat(spectrum, safe_edges[:-1])
-        fp = np.log1p(band_sums / band_widths).astype(np.float32)
-        norm = np.linalg.norm(fp)
-        if norm > 0:
-            fp /= norm
-        timestamps.append(pos / sr)
-        fingerprints.append(fp)
-        pos += hop_samples
-        count += 1
-        if progress_cb and count % 500 == 0:
-            progress_cb(count, total_possible)
+        return np.log1p(band_sums / band_widths).astype(np.float32)
 
-    if progress_cb:
-        progress_cb(count, count)
-    if count < 10:
-        raise RuntimeError(
-            f"Only {count} audio fingerprints extracted")
-    return np.array(timestamps), np.array(fingerprints)
+    return _extract_fingerprints(
+        filepath, track_index, max_samples, hop_sec, window_sec, sr,
+        frame_fn, "energy", progress_cb, cancel, audio_data, duration)
 
 
-def extract_band_peak_fingerprints(filepath, track_index=0,
-                                    max_samples=AUDIO_MAX_SAMPLES,
-                                    hop_sec=AUDIO_HOP_SEC,
-                                    window_sec=AUDIO_WINDOW_SEC,
-                                    sr=AUDIO_SAMPLE_RATE,
-                                    n_bands=AUDIO_N_COARSE_BANDS,
-                                    n_peaks=AUDIO_COARSE_N_PEAKS,
-                                    progress_cb=None, cancel=None,
-                                    audio_data=None, duration=0):
-    if duration <= 0:
-        duration = get_duration(filepath)
-    if duration <= 0:
-        duration = 300.0
-    needed_samples = int(duration / hop_sec) + 1
-    if needed_samples > max_samples:
-        hop_sec = duration / max_samples
+def build_mel_filterbank(n_fft, sr, n_mels=AUDIO_N_MELS,
+                         fmin=60.0, fmax=None):
+    if fmax is None:
+        fmax = sr / 2.0
+    mel_min = 2595.0 * np.log10(1.0 + fmin / 700.0)
+    mel_max = 2595.0 * np.log10(1.0 + fmax / 700.0)
+    mels = np.linspace(mel_min, mel_max, n_mels + 2)
+    hz = 700.0 * (10.0 ** (mels / 2595.0) - 1.0)
+    bins = np.floor((n_fft - 1) * 2 * hz / sr).astype(int)
+    bins = np.clip(bins, 0, n_fft - 1)
 
+    fb = np.zeros((n_mels, n_fft), dtype=np.float32)
+    for m in range(n_mels):
+        lo, mid, hi = bins[m], bins[m + 1], bins[m + 2]
+        if mid == lo:
+            mid = lo + 1
+        if hi == mid:
+            hi = mid + 1
+        for k in range(lo, mid):
+            fb[m, k] = (k - lo) / (mid - lo)
+        for k in range(mid, hi):
+            fb[m, k] = (hi - k) / (hi - mid)
+    return fb
+
+
+def extract_mel_fingerprints(filepath, track_index=0,
+                              max_samples=AUDIO_MAX_SAMPLES,
+                              hop_sec=AUDIO_HOP_SEC,
+                              window_sec=AUDIO_WINDOW_SEC,
+                              sr=AUDIO_SAMPLE_RATE,
+                              n_mels=AUDIO_N_MELS,
+                              progress_cb=None, cancel=None,
+                              audio_data=None, duration=0):
     window_samples = int(window_sec * sr)
-    hop_samples = int(hop_sec * sr)
-    hann = np.hanning(window_samples).astype(np.float32)
     n_fft_bins = window_samples // 2 + 1
+    mel_fb = build_mel_filterbank(n_fft_bins, sr, n_mels)
 
-    min_bin = max(1, int(60.0 / (sr / window_samples)))
-    band_edges = np.logspace(
-        np.log10(min_bin), np.log10(n_fft_bins - 1),
-        n_bands + 1
-    ).astype(int)
-    band_edges = np.clip(band_edges, 0, n_fft_bins - 1)
+    def frame_fn(spectrum):
+        return np.log1p(mel_fb @ spectrum).astype(np.float32)
 
-    if audio_data is not None:
-        audio = audio_data
-    else:
-        audio, _ = decode_full_audio(filepath, track_index, sr, cancel)
-    if len(audio) < window_samples:
-        raise RuntimeError("Could not extract enough audio data")
-
-    if progress_cb:
-        progress_cb(0, max_samples)
-
-    timestamps, fingerprints = [], []
-    pos = 0
-    count = 0
-    total_possible = min(max_samples,
-                         (len(audio) - window_samples) // hop_samples + 1)
-
-    while pos + window_samples <= len(audio) and count < max_samples:
-        if cancel and count % 200 == 0:
-            cancel.check()
-        frame = audio[pos:pos + window_samples] * hann
-        spectrum = np.abs(np.fft.rfft(frame))
-
-        is_peak = np.zeros(len(spectrum), dtype=bool)
-        if len(spectrum) > 2:
-            is_peak[1:-1] = ((spectrum[1:-1] > spectrum[:-2]) &
-                             (spectrum[1:-1] > spectrum[2:]))
-        peak_indices = np.where(is_peak)[0]
-        peak_mags = spectrum[peak_indices]
-
-        if len(peak_mags) > n_peaks:
-            top_idx = np.argsort(peak_mags)[-n_peaks:]
-            peak_indices = peak_indices[top_idx]
-            peak_mags = peak_mags[top_idx]
-
-        fp = np.zeros(n_bands, dtype=np.float32)
-        if len(peak_indices) > 0:
-            bands = np.searchsorted(band_edges[1:], peak_indices)
-            valid = bands < n_bands
-            np.maximum.at(fp, bands[valid], np.log1p(peak_mags[valid]))
-
-        norm = np.linalg.norm(fp)
-        if norm > 0:
-            fp /= norm
-
-        timestamps.append(pos / sr)
-        fingerprints.append(fp)
-        pos += hop_samples
-        count += 1
-        if progress_cb and count % 500 == 0:
-            progress_cb(count, total_possible)
-
-    if progress_cb:
-        progress_cb(count, count)
-    if count < 10:
-        raise RuntimeError(
-            f"Only {count} band-peak fingerprints extracted")
-    return np.array(timestamps), np.array(fingerprints)
+    return _extract_fingerprints(
+        filepath, track_index, max_samples, hop_sec, window_sec, sr,
+        frame_fn, "mel", progress_cb, cancel, audio_data, duration)
 
 
 def match_fingerprints(fp1, fp2, top_k=AUDIO_MATCH_TOP_K):
@@ -474,12 +443,28 @@ def detect_segments(inlier_pairs, a, coarse_offset=0.0,
 
     off_half = _xcorr_at_split(v1_dur * 0.6)
     if off_half is None or abs(off_half - primary_offset) < 10:
+        found_alt = False
         if alt_offsets:
             for alt_off, alt_spd, alt_corr in alt_offsets:
-                if abs(alt_off - primary_offset) >= 10:
-                    off_half = alt_off
-                    break
-        if off_half is None or abs(off_half - primary_offset) < 10:
+                if abs(alt_off - primary_offset) < 10:
+                    continue
+                if alt_corr < 0.1:
+                    continue
+                v1_s = int(v1_dur * 0.6 * er)
+                v2_est = (v1_dur * 0.6 - alt_off) / a
+                v2_s = max(0, int((v2_est - 300) * er))
+                a1v = d1[v1_s:]
+                a2v = d2[v2_s:]
+                if len(a1v) >= er * min_segment_sec and len(a2v) >= er * min_segment_sec:
+                    off_v, spd_v = _xcorr_window(a1v, a2v)
+                    if off_v is not None and abs(spd_v - a) / a <= 0.005:
+                        v2_abs = v2_s / er
+                        verified_off = v1_dur * 0.6 + off_v - v2_abs * spd_v
+                        if abs(verified_off - primary_offset) >= 10:
+                            off_half = verified_off
+                            found_alt = True
+                            break
+        if not found_alt:
             return [primary_seg]
 
     second_offset = off_half
@@ -583,3 +568,174 @@ def snap_speed_to_candidate(a, t1_inliers, t2_inliers):
     a_snapped = best_candidate
     b_snapped = float(np.mean(t1_inliers - a_snapped * t2_inliers))
     return a_snapped, b_snapped
+
+
+def dtw_align(fp1, fp2, ts1, ts2, coarse_offset, coarse_speed,
+              band_sec=DTW_BAND_SEC, cancel=None):
+    n1, n2 = len(fp1), len(fp2)
+    if n1 == 0 or n2 == 0:
+        return np.empty((0, 2), dtype=np.float64)
+
+    hop1 = ts1[1] - ts1[0] if n1 > 1 else 0.2
+    hop2 = ts2[1] - ts2[0] if n2 > 1 else 0.2
+    w1 = int(band_sec / hop1) if hop1 > 0 else 300
+    w2 = int(band_sec / hop2) if hop2 > 0 else 300
+    band_w = max(w1, w2, 10)
+
+    def _expected_i(j):
+        t2_sec = ts2[j] if j < n2 else ts2[-1]
+        t1_sec = coarse_speed * t2_sec + coarse_offset
+        return int(round((t1_sec - ts1[0]) / hop1)) if hop1 > 0 else j
+
+    INF = np.float64(1e18)
+    cost_band = np.full((n2, 2 * band_w + 1), INF, dtype=np.float64)
+    dp = np.full((n2, 2 * band_w + 1), INF, dtype=np.float64)
+    trace = np.zeros((n2, 2 * band_w + 1), dtype=np.int8)
+
+    for j in range(n2):
+        if cancel and j % 500 == 0:
+            cancel.check()
+        center = _expected_i(j)
+        i_lo = max(0, center - band_w)
+        i_hi = min(n1, center + band_w + 1)
+        if i_lo >= n1 or i_hi <= 0:
+            continue
+        fp2_row = fp2[j]
+        for bi in range(2 * band_w + 1):
+            i = center - band_w + bi
+            if i < 0 or i >= n1:
+                continue
+            cost_band[j, bi] = 1.0 - float(np.dot(fp1[i], fp2_row))
+
+    center0 = _expected_i(0)
+    for bi in range(2 * band_w + 1):
+        i = center0 - band_w + bi
+        if 0 <= i < n1:
+            dp[0, bi] = cost_band[0, bi]
+
+    for j in range(1, n2):
+        if cancel and j % 500 == 0:
+            cancel.check()
+        center_prev = _expected_i(j - 1)
+        center_cur = _expected_i(j)
+        shift = center_cur - center_prev
+
+        for bi in range(2 * band_w + 1):
+            if cost_band[j, bi] >= INF:
+                continue
+            best = INF
+            best_dir = 0
+
+            bi_prev_diag = bi + shift - 1
+            if 0 <= bi_prev_diag < 2 * band_w + 1:
+                v = dp[j - 1, bi_prev_diag]
+                if v < best:
+                    best = v
+                    best_dir = 0
+
+            bi_prev_horiz = bi + shift
+            if 0 <= bi_prev_horiz < 2 * band_w + 1:
+                v = dp[j - 1, bi_prev_horiz]
+                if v < best:
+                    best = v
+                    best_dir = 1
+
+            if bi > 0 and dp[j, bi - 1] < best:
+                best = dp[j, bi - 1]
+                best_dir = 2
+
+            dp[j, bi] = cost_band[j, bi] + (best if best < INF else 0.0)
+            trace[j, bi] = best_dir
+
+    best_bi = -1
+    best_val = INF
+    for bi in range(2 * band_w + 1):
+        if dp[n2 - 1, bi] < best_val:
+            best_val = dp[n2 - 1, bi]
+            best_bi = bi
+
+    if best_bi < 0:
+        return np.column_stack([ts1[:min(n1, n2)], ts2[:min(n1, n2)]])
+
+    path = []
+    j, bi = n2 - 1, best_bi
+    while j >= 0:
+        center = _expected_i(j)
+        i = center - band_w + bi
+        i = max(0, min(n1 - 1, i))
+        path.append((float(ts1[i]), float(ts2[j])))
+        if j == 0:
+            break
+        d = trace[j, bi]
+        shift_back = _expected_i(j) - _expected_i(j - 1)
+        if d == 0:
+            bi = bi + shift_back - 1
+            j -= 1
+        elif d == 1:
+            bi = bi + shift_back
+            j -= 1
+        else:
+            bi -= 1
+        bi = max(0, min(2 * band_w, bi))
+
+    path.reverse()
+    return np.array(path, dtype=np.float64)
+
+
+def dtw_path_to_segments(warp_path, speed, min_segment_sec=DTW_MIN_SEGMENT_SEC):
+    if len(warp_path) < 2:
+        off = warp_path[0, 0] - speed * warp_path[0, 1] if len(warp_path) == 1 else 0.0
+        return [{"v1_start": 0.0, "v1_end": float("inf"),
+                 "offset": float(off), "n_inliers": len(warp_path)}]
+
+    offsets = warp_path[:, 0] - speed * warp_path[:, 1]
+
+    boundaries = [0]
+    window = max(5, len(offsets) // 200)
+    smoothed = np.convolve(offsets, np.ones(window) / window, mode='same')
+
+    for k in range(window, len(smoothed) - window):
+        if abs(smoothed[k] - smoothed[k - window]) > 2.0:
+            if not boundaries or k - boundaries[-1] > window:
+                boundaries.append(k)
+    boundaries.append(len(offsets))
+
+    raw_segments = []
+    for s in range(len(boundaries) - 1):
+        lo, hi = boundaries[s], boundaries[s + 1]
+        seg_offsets = offsets[lo:hi]
+        med_off = float(np.median(seg_offsets))
+        v1_start = float(warp_path[lo, 0])
+        v1_end = float(warp_path[min(hi, len(warp_path) - 1), 0])
+        raw_segments.append({
+            "v1_start": v1_start, "v1_end": v1_end,
+            "offset": med_off, "n_inliers": hi - lo,
+        })
+
+    if len(raw_segments) <= 1:
+        return [{"v1_start": 0.0, "v1_end": float("inf"),
+                 "offset": raw_segments[0]["offset"],
+                 "n_inliers": raw_segments[0]["n_inliers"]}]
+
+    merged = [raw_segments[0]]
+    for seg in raw_segments[1:]:
+        prev = merged[-1]
+        seg_dur = seg["v1_end"] - seg["v1_start"]
+        if seg_dur < min_segment_sec:
+            prev["v1_end"] = seg["v1_end"]
+            prev["n_inliers"] += seg["n_inliers"]
+        else:
+            merged.append(seg)
+
+    while len(merged) > 1:
+        first_dur = merged[0]["v1_end"] - merged[0]["v1_start"]
+        if first_dur < min_segment_sec:
+            merged[1]["v1_start"] = merged[0]["v1_start"]
+            merged[1]["n_inliers"] += merged[0]["n_inliers"]
+            merged.pop(0)
+        else:
+            break
+
+    merged[0]["v1_start"] = 0.0
+    merged[-1]["v1_end"] = float("inf")
+    return merged

@@ -1,5 +1,6 @@
 .easy-git/
 .samples/
+.local/
 tools/
 ffmpeg
 ffmpeg.exe

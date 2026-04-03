@@ -1,6 +1,7 @@
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -59,66 +60,127 @@ class CancelledError(Exception):
     pass
 
 
-def _run(cmd, check=True, timeout=30, cancel=None, return_stderr=False):
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            creationflags=_creationflags)
-    stdout_buf = []
-    stderr_buf = []
+_TIME_RE = re.compile(r"time=(\d+):(\d+):(\d+)\.(\d+)")
 
-    def _reader(pipe, buf):
+
+def _run(cmd, check=True, timeout=30, cancel=None, return_stderr=False,
+         discard_stdout=False, progress_cb=None, duration=0,
+         progress_prefix="mux"):
+    stdout_pipe = subprocess.DEVNULL if discard_stdout else subprocess.PIPE
+    use_progress = progress_cb is not None and duration > 0
+
+    if use_progress:
+        proc = subprocess.Popen(cmd, stdout=stdout_pipe, stderr=subprocess.PIPE,
+                                universal_newlines=True, errors="replace",
+                                creationflags=_creationflags)
+        stderr_lines = []
         try:
+            buf = []
             while True:
-                chunk = pipe.read(65536)
-                if not chunk:
+                ch = proc.stderr.read(1)
+                if not ch:
                     break
-                buf.append(chunk)
-        except Exception:
-            pass
-
-    t_out = threading.Thread(target=_reader, args=(proc.stdout, stdout_buf),
-                             daemon=True)
-    t_err = threading.Thread(target=_reader, args=(proc.stderr, stderr_buf),
-                             daemon=True)
-    t_out.start()
-    t_err.start()
-
-    try:
-        elapsed = 0.0
-        while True:
-            if cancel and cancel.is_cancelled:
-                proc.kill()
-                proc.wait(timeout=5)
-                raise CancelledError("Cancelled")
+                if ch in ('\r', '\n'):
+                    line = ''.join(buf)
+                    buf = []
+                    if not line:
+                        continue
+                    if cancel and cancel.is_cancelled:
+                        proc.kill()
+                        proc.wait()
+                        proc.stderr.close()
+                        raise CancelledError("Cancelled")
+                    stderr_lines.append(line)
+                    all_times = _TIME_RE.findall(line)
+                    if all_times:
+                        h, mi, s, frac_str = (int(all_times[-1][0]),
+                                              int(all_times[-1][1]),
+                                              int(all_times[-1][2]),
+                                              all_times[-1][3])
+                        pos = (h * 3600 + mi * 60 + s
+                               + int(frac_str) / (10 ** len(frac_str)))
+                        pct = min(99, int(pos / duration * 100))
+                        progress_cb("progress", f"{progress_prefix}:{pct}")
+                else:
+                    buf.append(ch)
             try:
-                proc.wait(timeout=0.5)
-                break
+                proc.wait(timeout=30)
             except subprocess.TimeoutExpired:
-                elapsed += 0.5
-                if timeout is not None and elapsed >= timeout:
+                proc.kill()
+                proc.wait()
+            if check and proc.returncode != 0:
+                tail = "\n".join(stderr_lines[-20:])
+                raise RuntimeError(
+                    f"{cmd[0]} failed (code {proc.returncode}):\n{tail}")
+        except CancelledError:
+            raise
+        stdout = b""
+        stderr_str = "\n".join(stderr_lines)
+    else:
+        proc = subprocess.Popen(cmd, stdout=stdout_pipe, stderr=subprocess.PIPE,
+                                creationflags=_creationflags)
+        stdout_buf = []
+        stderr_buf = []
+
+        def _reader(pipe, buf):
+            try:
+                while True:
+                    chunk = pipe.read(65536)
+                    if not chunk:
+                        break
+                    buf.append(chunk)
+            except Exception:
+                pass
+
+        if not discard_stdout:
+            t_out = threading.Thread(target=_reader,
+                                     args=(proc.stdout, stdout_buf), daemon=True)
+            t_out.start()
+        t_err = threading.Thread(target=_reader,
+                                  args=(proc.stderr, stderr_buf), daemon=True)
+        t_err.start()
+
+        try:
+            elapsed = 0.0
+            while True:
+                if cancel and cancel.is_cancelled:
                     proc.kill()
                     proc.wait(timeout=5)
-                    raise subprocess.TimeoutExpired(cmd, timeout)
-    except (CancelledError, subprocess.TimeoutExpired):
-        t_out.join(timeout=2)
-        t_err.join(timeout=2)
-        raise
-    except Exception:
-        proc.kill()
-        proc.wait(timeout=5)
-        t_out.join(timeout=2)
-        t_err.join(timeout=2)
-        raise
+                    raise CancelledError("Cancelled")
+                try:
+                    proc.wait(timeout=0.5)
+                    break
+                except subprocess.TimeoutExpired:
+                    elapsed += 0.5
+                    if timeout is not None and elapsed >= timeout:
+                        proc.kill()
+                        proc.wait(timeout=5)
+                        raise subprocess.TimeoutExpired(cmd, timeout)
+        except (CancelledError, subprocess.TimeoutExpired):
+            if not discard_stdout:
+                t_out.join(timeout=2)
+            t_err.join(timeout=2)
+            raise
+        except Exception:
+            proc.kill()
+            proc.wait(timeout=5)
+            if not discard_stdout:
+                t_out.join(timeout=2)
+            t_err.join(timeout=2)
+            raise
 
-    t_out.join()
-    t_err.join()
-    stdout = b"".join(stdout_buf)
-    stderr = b"".join(stderr_buf)
+        if not discard_stdout:
+            t_out.join()
+        t_err.join()
+        stdout = b"".join(stdout_buf) if not discard_stdout else b""
+        stderr_str = b"".join(stderr_buf).decode("utf-8", errors="replace").strip()
 
-    if check and proc.returncode != 0:
-        stderr_str = stderr.decode("utf-8", errors="replace").strip()
-        raise RuntimeError(f"{cmd[0]} failed (code {proc.returncode}): {stderr_str}")
+        if check and proc.returncode != 0:
+            raise RuntimeError(
+                f"{cmd[0]} failed (code {proc.returncode}): {stderr_str}")
+
     if return_stderr:
-        return stdout, stderr.decode("utf-8", errors="replace").strip()
+        return stdout, stderr_str
     return stdout
 
 
@@ -132,6 +194,11 @@ def _require_ffmpeg():
     if not _ffmpeg:
         raise RuntimeError("ffmpeg not found. Set FFMPEG_PATH or install ffmpeg.")
     return _ffmpeg
+
+
+def _normalize_lang(code):
+    from probe import normalize_language
+    return normalize_language(code)
 
 
 def probe(handle):
@@ -150,7 +217,7 @@ def probe(handle):
             codec_type = "attachment"
         stream_index = int(s.get("index", 0))
         tags = s.get("tags") or {}
-        language = tags.get("language", "und")
+        language = _normalize_lang(tags.get("language", "und"))
         title = tags.get("title", "")
         codec = s.get("codec_name", "?")
 
@@ -160,6 +227,7 @@ def probe(handle):
             "codec": codec,
             "language": language,
             "title": title,
+            "start_time": float(s.get("start_time", 0)),
         }
 
         if codec_type == "audio":
@@ -175,6 +243,7 @@ def probe(handle):
                 "bit_rate": int(s.get("bit_rate", 0) or 0),
                 "language": language,
                 "title": title,
+                "start_time": float(s.get("start_time", 0)),
             })
             audio_idx += 1
         elif codec_type == "video":

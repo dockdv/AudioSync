@@ -4,16 +4,37 @@ import os
 import fflib
 
 LANG_NAMES = {
-    "eng":"English","spa":"Spanish","fra":"French","deu":"German","ita":"Italian",
-    "por":"Portuguese","rus":"Russian","zho":"Chinese","jpn":"Japanese","kor":"Korean",
-    "ara":"Arabic","hin":"Hindi","tur":"Turkish","pol":"Polish","nld":"Dutch",
-    "swe":"Swedish","dan":"Danish","nor":"Norwegian","fin":"Finnish","ces":"Czech",
-    "ell":"Greek","heb":"Hebrew","tha":"Thai","vie":"Vietnamese","ind":"Indonesian",
-    "msa":"Malay","ron":"Romanian","hun":"Hungarian","ukr":"Ukrainian","bul":"Bulgarian",
-    "hrv":"Croatian","slk":"Slovak","slv":"Slovenian","srp":"Serbian","lit":"Lithuanian",
-    "lav":"Latvian","est":"Estonian","cat":"Catalan","fas":"Persian","urd":"Urdu",
+    "eng":"English","spa":"Spanish","fre":"French","ger":"German","ita":"Italian",
+    "por":"Portuguese","rus":"Russian","chi":"Chinese","jpn":"Japanese","kor":"Korean",
+    "ara":"Arabic","hin":"Hindi","tur":"Turkish","pol":"Polish","dut":"Dutch",
+    "swe":"Swedish","dan":"Danish","nor":"Norwegian","fin":"Finnish","cze":"Czech",
+    "gre":"Greek","heb":"Hebrew","tha":"Thai","vie":"Vietnamese","ind":"Indonesian",
+    "may":"Malay","rum":"Romanian","hun":"Hungarian","ukr":"Ukrainian","bul":"Bulgarian",
+    "hrv":"Croatian","slo":"Slovak","slv":"Slovenian","srp":"Serbian","lit":"Lithuanian",
+    "lav":"Latvian","est":"Estonian","cat":"Catalan","per":"Persian","urd":"Urdu",
     "ben":"Bengali","tam":"Tamil","tel":"Telugu","mal":"Malayalam","kan":"Kannada",
 }
+
+_LANG_NORMALIZE = {
+    "en": "eng", "es": "spa", "fr": "fre", "de": "ger", "it": "ita",
+    "pt": "por", "ru": "rus", "zh": "chi", "ja": "jpn", "ko": "kor",
+    "ar": "ara", "hi": "hin", "tr": "tur", "pl": "pol", "nl": "dut",
+    "sv": "swe", "da": "dan", "no": "nor", "fi": "fin", "cs": "cze",
+    "el": "gre", "he": "heb", "th": "tha", "vi": "vie", "id": "ind",
+    "ms": "may", "ro": "rum", "hu": "hun", "uk": "ukr", "bg": "bul",
+    "hr": "hrv", "sk": "slo", "sl": "slv", "sr": "srp", "lt": "lit",
+    "lv": "lav", "et": "est", "ca": "cat", "fa": "per", "ur": "urd",
+    "bn": "ben", "ta": "tam", "te": "tel", "ml": "mal", "kn": "kan",
+    "fra": "fre", "deu": "ger", "zho": "chi", "nld": "dut", "ces": "cze",
+    "ell": "gre", "fas": "per", "ron": "rum", "slk": "slo", "msa": "may",
+}
+
+
+def normalize_language(code):
+    if not code:
+        return "und"
+    code = code.strip().lower()
+    return _LANG_NORMALIZE.get(code, code)
 
 ALL_LANGUAGES = [("und", "Undetermined")] + sorted(
     [(code, name) for code, name in LANG_NAMES.items()],
@@ -57,12 +78,13 @@ def probe_full(filepath):
             codec = a.get("codec", "?")
             ch = a.get("channels", "?")
             sr = a.get("sample_rate", "?")
-            lbl = f"Track {i}: [{lang}] {codec}, {ch}ch, {sr}Hz"
             tracks.append({
                 "index": i, "stream_index": a.get("stream_index", i),
-                "label": lbl, "language": lang,
-                "title": a.get("title", ""),
+                "codec_type": "audio",
+                "language": lang, "title": a.get("title", ""),
                 "codec": codec, "channels": ch, "sample_rate": sr,
+                "start_time": a.get("start_time", 0.0),
+                "bit_rate": a.get("bit_rate", 0),
             })
         if tracks:
             return tracks, streams, duration, "libav", ""

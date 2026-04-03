@@ -5,20 +5,22 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import fflib
 from fflib import CancelledError
-from probe import get_duration
 from audio import (
-    AUDIO_SAMPLE_RATE, AUDIO_HOP_SEC, AUDIO_MAX_SAMPLES,
+    AUDIO_SAMPLE_RATE,
     AUDIO_MATCH_TOP_K, AUDIO_RANSAC_ITERATIONS, AUDIO_RANSAC_THRESHOLD_SEC,
     SPEED_CANDIDATES,
     decode_full_audio, extract_audio_fingerprints,
-    extract_band_peak_fingerprints, match_fingerprints,
+    extract_mel_fingerprints,
+    match_fingerprints,
     mutual_nearest_neighbors, downsample_audio, filter_matches_by_offset,
     ransac_linear_fit, residual_stats, xcorr_on_downsampled,
     detect_segments, snap_speed_to_candidate, compute_lufs,
+    dtw_align, dtw_path_to_segments,
 )
 from visual import (
-    verify_offset_visual, refine_boundary_visual,
+    verify_offset_visual, validate_segments_visual, refine_boundary_visual,
 )
+from ctx import AlignContext
 
 
 def format_timestamp(seconds):
@@ -32,6 +34,7 @@ def format_timestamp(seconds):
     if h > 0:
         return f"{sign}{h}:{m:02d}:{s:06.3f}"
     return f"{sign}{m}:{s:06.3f}"
+
 
 class CancellableTask:
     def __init__(self):
@@ -49,173 +52,199 @@ class CancellableTask:
             raise CancelledError("Cancelled")
 
 
-def auto_align_audio(fp1, fp2, track1=0, track2=0,
-                      progress_cb=None, cancel=None,
-                      vocal_filter=False):
-    dur1 = get_duration(fp1)
-    dur2 = get_duration(fp2)
-    hop = AUDIO_HOP_SEC
-    max_s = AUDIO_MAX_SAMPLES
-    hop1 = dur1 / max_s if (dur1 > 0 and dur1 / hop > max_s) else hop
-    hop2 = dur2 / max_s if (dur2 > 0 and dur2 / hop > max_s) else hop
-
-    decode_warnings = []
-    if progress_cb:
-        progress_cb("status", "Decoding V1 + V2 audio...")
+def _decode_and_fingerprint(ctx):
+    if ctx.progress_cb:
+        ctx.progress_cb("status", "Decoding V1 + V2 audio...")
     with ThreadPoolExecutor(max_workers=2) as pool:
-        f1 = pool.submit(decode_full_audio, fp1, track1, AUDIO_SAMPLE_RATE,
-                         cancel)
-        f2 = pool.submit(decode_full_audio, fp2, track2, AUDIO_SAMPLE_RATE,
-                         cancel)
-        audio1, msgs1 = f1.result()
-        audio2, msgs2 = f2.result()
-    if cancel:
-        cancel.check()
+        f1 = pool.submit(decode_full_audio, ctx.fp1, ctx.track1,
+                         AUDIO_SAMPLE_RATE, ctx.cancel, duration=ctx.dur1)
+        f2 = pool.submit(decode_full_audio, ctx.fp2, ctx.track2,
+                         AUDIO_SAMPLE_RATE, ctx.cancel, duration=ctx.dur2)
+        ctx.audio1, msgs1 = f1.result()
+        ctx.audio2, msgs2 = f2.result()
+    if ctx.cancel:
+        ctx.cancel.check()
     for m in (msgs1 or []):
-        decode_warnings.append(f"V1: {m}")
+        ctx.decode_warnings.append(f"V1: {m}")
     for m in (msgs2 or []):
-        decode_warnings.append(f"V2: {m}")
+        ctx.decode_warnings.append(f"V2: {m}")
 
-    v1_lufs = compute_lufs(audio1, AUDIO_SAMPLE_RATE)
-    v2_lufs = compute_lufs(audio2, AUDIO_SAMPLE_RATE)
+    ctx.v1_lufs = compute_lufs(ctx.audio1, AUDIO_SAMPLE_RATE)
+    ctx.v2_lufs = compute_lufs(ctx.audio2, AUDIO_SAMPLE_RATE)
 
-    if progress_cb:
-        progress_cb("status", "Band-peak FP: V1...")
-    ts1, f1_peak = extract_band_peak_fingerprints(
-        fp1, track_index=track1, max_samples=max_s, hop_sec=hop1,
-        progress_cb=(lambda c, t: progress_cb("fp", f"V1 band-peak: {c}/{t}")
-                     if progress_cb else None),
-        cancel=cancel, audio_data=audio1, duration=dur1)
-    if cancel:
-        cancel.check()
-    if progress_cb:
-        progress_cb("status", "Band-peak FP: V2...")
-    ts2, f2_peak = extract_band_peak_fingerprints(
-        fp2, track_index=track2, max_samples=max_s, hop_sec=hop2,
-        progress_cb=(lambda c, t: progress_cb("fp", f"V2 band-peak: {c}/{t}")
-                     if progress_cb else None),
-        cancel=cancel, audio_data=audio2, duration=dur2)
-    if cancel:
-        cancel.check()
+    if ctx.progress_cb:
+        ctx.progress_cb("status", "Mel FP: V1...")
+    ctx.ts1, ctx.fp1_main = extract_mel_fingerprints(
+        ctx.fp1, track_index=ctx.track1, max_samples=ctx.max_s,
+        hop_sec=ctx.hop1,
+        progress_cb=(lambda c, t: ctx.progress_cb("fp", f"V1 Mel: {c}/{t}")
+                     if ctx.progress_cb else None),
+        cancel=ctx.cancel, audio_data=ctx.audio1, duration=ctx.dur1)
+    if ctx.cancel:
+        ctx.cancel.check()
+    if ctx.progress_cb:
+        ctx.progress_cb("status", "Mel FP: V2...")
+    ctx.ts2, ctx.fp2_main = extract_mel_fingerprints(
+        ctx.fp2, track_index=ctx.track2, max_samples=ctx.max_s,
+        hop_sec=ctx.hop2,
+        progress_cb=(lambda c, t: ctx.progress_cb("fp", f"V2 Mel: {c}/{t}")
+                     if ctx.progress_cb else None),
+        cancel=ctx.cancel, audio_data=ctx.audio2, duration=ctx.dur2)
+    if ctx.cancel:
+        ctx.cancel.check()
 
-    if len(f1_peak) < 10 or len(f2_peak) < 10:
+    if len(ctx.fp1_main) < 10 or len(ctx.fp2_main) < 10:
         raise RuntimeError(
-            f"Not enough audio data (V1: {len(f1_peak)}, "
-            f"V2: {len(f2_peak)})")
+            f"Not enough audio data (V1: {len(ctx.fp1_main)}, "
+            f"V2: {len(ctx.fp2_main)})")
 
-    f1_energy, f2_energy = None, None
+    ctx.ah1 = np.median(np.diff(ctx.ts1)) if len(ctx.ts1) > 1 else ctx.hop1
+    ctx.ah2 = np.median(np.diff(ctx.ts2)) if len(ctx.ts2) > 1 else ctx.hop2
 
-    def _ensure_energy_fp(a1, a2):
-        nonlocal f1_energy, f2_energy
-        if f1_energy is not None:
-            return
-        if progress_cb:
-            progress_cb("status", "Computing energy fingerprints (fallback)...")
-        f1_energy = extract_audio_fingerprints(
-            fp1, track_index=track1, max_samples=max_s, hop_sec=hop1,
-            progress_cb=(lambda c, t: progress_cb("fp", f"V1 energy: {c}/{t}")
-                         if progress_cb else None),
-            cancel=cancel, audio_data=a1, duration=dur1)[1]
-        if cancel:
-            cancel.check()
-        f2_energy = extract_audio_fingerprints(
-            fp2, track_index=track2, max_samples=max_s, hop_sec=hop2,
-            progress_cb=(lambda c, t: progress_cb("fp", f"V2 energy: {c}/{t}")
-                         if progress_cb else None),
-            cancel=cancel, audio_data=a2, duration=dur2)[1]
-        if cancel:
-            cancel.check()
 
-    if progress_cb:
-        progress_cb("status", "Computing coarse offset + speed (cross-correlation)...")
+def _compute_coarse_alignment(ctx):
+    if ctx.progress_cb:
+        ctx.progress_cb("status", "Computing coarse offset + speed (cross-correlation)...")
 
-    if vocal_filter:
-        if progress_cb:
-            progress_cb("status", "Decoding band-filtered audio for xcorr...")
+    if ctx.vocal_filter:
+        if ctx.progress_cb:
+            ctx.progress_cb("status", "Decoding band-filtered audio for xcorr...")
         with ThreadPoolExecutor(max_workers=2) as pool:
-            f1 = pool.submit(decode_full_audio, fp1, track1,
-                             AUDIO_SAMPLE_RATE, cancel, vocal_filter=True)
-            f2 = pool.submit(decode_full_audio, fp2, track2,
-                             AUDIO_SAMPLE_RATE, cancel, vocal_filter=True)
+            f1 = pool.submit(decode_full_audio, ctx.fp1, ctx.track1,
+                             AUDIO_SAMPLE_RATE, ctx.cancel, vocal_filter=True,
+                             duration=ctx.dur1)
+            f2 = pool.submit(decode_full_audio, ctx.fp2, ctx.track2,
+                             AUDIO_SAMPLE_RATE, ctx.cancel, vocal_filter=True,
+                             duration=ctx.dur2)
             xcorr_a1, _ = f1.result()
             xcorr_a2, _ = f2.result()
-        if cancel:
-            cancel.check()
+        if ctx.cancel:
+            ctx.cancel.check()
     else:
-        xcorr_a1 = audio1
-        xcorr_a2 = audio2
+        xcorr_a1 = ctx.audio1
+        xcorr_a2 = ctx.audio2
 
-    ds1, ds_rate = downsample_audio(xcorr_a1, AUDIO_SAMPLE_RATE)
+    ds1, ctx.ds_rate = downsample_audio(xcorr_a1, AUDIO_SAMPLE_RATE)
     ds2, _ = downsample_audio(xcorr_a2, AUDIO_SAMPLE_RATE)
     del xcorr_a1, xcorr_a2
 
-    if vocal_filter:
-        ds1_seg, _ = downsample_audio(audio1, AUDIO_SAMPLE_RATE)
-        ds2_seg, _ = downsample_audio(audio2, AUDIO_SAMPLE_RATE)
+    if ctx.vocal_filter:
+        ctx.ds1_seg, _ = downsample_audio(ctx.audio1, AUDIO_SAMPLE_RATE)
+        ctx.ds2_seg, _ = downsample_audio(ctx.audio2, AUDIO_SAMPLE_RATE)
     else:
-        ds1_seg, ds2_seg = ds1, ds2
+        ctx.ds1_seg, ctx.ds2_seg = ds1, ds2
 
-    coarse_offset, xcorr_speed, xcorr_corr, alt_offsets = xcorr_on_downsampled(
-        ds1, ds2, ds_rate, SPEED_CANDIDATES, return_alt_offsets=True)
+    ctx.coarse_offset, ctx.xcorr_speed, _, ctx.alt_offsets = \
+        xcorr_on_downsampled(ds1, ds2, ctx.ds_rate, SPEED_CANDIDATES,
+                             return_alt_offsets=True)
 
-    audio_offset = coarse_offset
-    audio_speed = xcorr_speed
+    ctx.audio_offset = ctx.coarse_offset
+    ctx.audio_speed = ctx.xcorr_speed
 
-    if cancel:
-        cancel.check()
+    if ctx.cancel:
+        ctx.cancel.check()
 
-    v1_has_video = any(s["codec_type"] == "video"
-                       for s in fflib.probe(fp1).get("streams", []))
-    v2_has_video = any(s["codec_type"] == "video"
-                       for s in fflib.probe(fp2).get("streams", []))
-    visual_corrected = False
-    visual_result = None
-    if v1_has_video and v2_has_video:
-        visual_result = verify_offset_visual(
-            fp1, fp2, coarse_offset, xcorr_speed, alt_offsets, dur1, dur2,
-            progress_cb=progress_cb, cancel=cancel)
-        if visual_result is not None:
-            coarse_offset = visual_result["offset"]
-            xcorr_speed = visual_result["speed"]
-            alt_offsets = []
-            visual_corrected = True
+    if ctx.v1_has_video and ctx.v2_has_video:
+        ctx.visual_result = verify_offset_visual(
+            ctx.fp1, ctx.fp2, ctx.coarse_offset - ctx.start_adj,
+            ctx.xcorr_speed,
+            [(off - ctx.start_adj, spd, corr)
+             for off, spd, corr in ctx.alt_offsets],
+            ctx.dur1, ctx.dur2,
+            progress_cb=ctx.progress_cb, cancel=ctx.cancel)
+        if ctx.visual_result is not None:
+            ctx.coarse_offset = ctx.visual_result["offset"] + ctx.start_adj
+            ctx.xcorr_speed = ctx.visual_result["speed"]
+            ctx.alt_offsets = []
+            ctx.visual_corrected = True
 
-    if progress_cb:
-        progress_cb("status",
-                     f"Matching {len(f1_peak)}x{len(f2_peak)} "
-                     f"peak fingerprints...")
-    matches = match_fingerprints(f1_peak, f2_peak, top_k=AUDIO_MATCH_TOP_K)
-    if cancel:
-        cancel.check()
 
-    matches = mutual_nearest_neighbors(matches, len(f1_peak), len(f2_peak),
+def _align_dtw(ctx):
+    if ctx.progress_cb:
+        ctx.progress_cb("status",
+                         f"DTW alignment ({len(ctx.fp1_main)}x"
+                         f"{len(ctx.fp2_main)} frames)...")
+    warp_path = dtw_align(ctx.fp1_main, ctx.fp2_main, ctx.ts1, ctx.ts2,
+                          ctx.coarse_offset, ctx.xcorr_speed,
+                          cancel=ctx.cancel)
+    ctx.segments = dtw_path_to_segments(warp_path, ctx.xcorr_speed)
+    for seg in ctx.segments:
+        seg["offset"] -= ctx.start_adj
+
+    if len(ctx.segments) > 1 and ctx.v1_has_video and ctx.v2_has_video:
+        if ctx.progress_cb:
+            ctx.progress_cb("status", "Validating DTW segments visually...")
+        if validate_segments_visual(
+                ctx.fp1, ctx.fp2, ctx.segments, ctx.segments[0]["offset"],
+                ctx.xcorr_speed, ctx.dur1, ctx.dur2, cancel=ctx.cancel):
+            ctx.segments = [{"v1_start": 0.0, "v1_end": float("inf"),
+                             "offset": ctx.segments[0]["offset"],
+                             "n_inliers": sum(s["n_inliers"]
+                                              for s in ctx.segments)}]
+
+    ctx.mode = "audio-dtw"
+    ctx.a = ctx.xcorr_speed
+    ctx.b = ctx.segments[0]["offset"]
+    ctx.ni = sum(s["n_inliers"] for s in ctx.segments)
+    ctx.total_good = ctx.ni
+
+
+def _align_ransac(ctx):
+    if ctx.progress_cb:
+        ctx.progress_cb("status",
+                         f"Matching {len(ctx.fp1_main)}x"
+                         f"{len(ctx.fp2_main)} fingerprints...")
+    matches = match_fingerprints(ctx.fp1_main, ctx.fp2_main,
+                                 top_k=AUDIO_MATCH_TOP_K)
+    if ctx.cancel:
+        ctx.cancel.check()
+
+    matches = mutual_nearest_neighbors(matches, len(ctx.fp1_main),
+                                       len(ctx.fp2_main),
                                        top_k=AUDIO_MATCH_TOP_K)
 
-    filtered = filter_matches_by_offset(matches, ts1, ts2, coarse_offset,
-                                        speed=xcorr_speed)
+    filtered = filter_matches_by_offset(matches, ctx.ts1, ctx.ts2,
+                                        ctx.coarse_offset,
+                                        speed=ctx.xcorr_speed)
     if len(filtered) >= 20:
         matches = filtered
     else:
-        filtered = filter_matches_by_offset(matches, ts1, ts2, coarse_offset,
-                                            window_sec=30.0, speed=xcorr_speed)
+        filtered = filter_matches_by_offset(matches, ctx.ts1, ctx.ts2,
+                                            ctx.coarse_offset,
+                                            window_sec=30.0,
+                                            speed=ctx.xcorr_speed)
         if len(filtered) >= 20:
             matches = filtered
 
     if len(matches) < 20:
-        if progress_cb:
-            progress_cb("status", "Falling back to energy-band matching...")
-        _ensure_energy_fp(audio1, audio2)
+        if ctx.progress_cb:
+            ctx.progress_cb("status", "Falling back to energy-band matching...")
+        f1_energy = extract_audio_fingerprints(
+            ctx.fp1, track_index=ctx.track1, max_samples=ctx.max_s,
+            hop_sec=ctx.hop1,
+            progress_cb=(lambda c, t: ctx.progress_cb("fp", f"V1 energy: {c}/{t}")
+                         if ctx.progress_cb else None),
+            cancel=ctx.cancel, audio_data=ctx.audio1, duration=ctx.dur1)[1]
+        if ctx.cancel:
+            ctx.cancel.check()
+        f2_energy = extract_audio_fingerprints(
+            ctx.fp2, track_index=ctx.track2, max_samples=ctx.max_s,
+            hop_sec=ctx.hop2,
+            progress_cb=(lambda c, t: ctx.progress_cb("fp", f"V2 energy: {c}/{t}")
+                         if ctx.progress_cb else None),
+            cancel=ctx.cancel, audio_data=ctx.audio2, duration=ctx.dur2)[1]
+        if ctx.cancel:
+            ctx.cancel.check()
         matches = match_fingerprints(f1_energy, f2_energy,
                                      top_k=AUDIO_MATCH_TOP_K)
         matches = mutual_nearest_neighbors(matches, len(f1_energy),
                                            len(f2_energy),
                                            top_k=AUDIO_MATCH_TOP_K)
-        filtered = filter_matches_by_offset(matches, ts1, ts2, coarse_offset,
-                                            speed=xcorr_speed)
+        filtered = filter_matches_by_offset(matches, ctx.ts1, ctx.ts2,
+                                            ctx.coarse_offset,
+                                            speed=ctx.xcorr_speed)
         if len(filtered) >= 20:
             matches = filtered
-
-    del audio1, audio2
 
     if len(matches) == 0:
         good = []
@@ -229,133 +258,101 @@ def auto_align_audio(fp1, fp2, track1=0, track2=0,
         if len(good) < 10:
             thr = max(0.70, np.percentile(sims, 40))
             good = [m for m in matches if m[2] >= thr]
-    ah1 = np.median(np.diff(ts1)) if len(ts1) > 1 else hop1
-    ah2 = np.median(np.diff(ts2)) if len(ts2) > 1 else hop2
 
     if len(good) < 4:
-        atempo_xcorr = 1.0 / xcorr_speed if abs(xcorr_speed) > 1e-9 else 1.0
-        return {
-            "speed_ratio": atempo_xcorr, "offset": coarse_offset,
-            "linear_a": xcorr_speed, "linear_b": coarse_offset,
-            "inlier_count": 0, "total_candidates": len(good),
-            "inlier_pairs": [],
-            "v1_coverage": (float(ts1[0]), float(ts1[-1])),
-            "v2_coverage": (float(ts2[0]), float(ts2[-1])),
-            "v1_interval": float(ah1), "v2_interval": float(ah2),
-            "mode": "audio-xcorr", "sync_tracks": (track1, track2),
-            "residual_mean": 0, "residual_max": 0,
-            "residual_end": 0,
-            "coarse_offset": coarse_offset,
-            "segments": [{"v1_start": 0.0, "v1_end": float("inf"),
-                          "offset": coarse_offset, "n_inliers": 0}],
-            "warnings": decode_warnings,
-            "audio_offset": audio_offset,
-            "audio_speed": audio_speed,
-            "visual_corrected": visual_corrected,
-            "visual_offset": visual_result["offset"] if visual_corrected else None,
-            "visual_speed": visual_result["speed"] if visual_corrected else None,
-            "visual_score": visual_result["score"] if visual_corrected else None,
-            "audio_visual_score": visual_result.get("audio_score") if visual_corrected else None,
-        }
+        return False
 
-    t1m = np.array([ts1[g[0]] for g in good])
-    t2m = np.array([ts2[g[1]] for g in good])
-    ransac_thr = max(AUDIO_RANSAC_THRESHOLD_SEC, (ah1 + ah2) * 0.6)
-    if progress_cb:
-        progress_cb("status",
-                     f"RANSAC ({len(good)} candidates, "
-                     f"thr={ransac_thr:.2f}s)...")
+    t1m = np.array([ctx.ts1[g[0]] for g in good])
+    t2m = np.array([ctx.ts2[g[1]] for g in good])
+    ransac_thr = max(AUDIO_RANSAC_THRESHOLD_SEC, (ctx.ah1 + ctx.ah2) * 0.6)
+    if ctx.progress_cb:
+        ctx.progress_cb("status",
+                         f"RANSAC ({len(good)} candidates, "
+                         f"thr={ransac_thr:.2f}s)...")
     a, b, mask, ni = ransac_linear_fit(
         t1m, t2m, n_iter=AUDIO_RANSAC_ITERATIONS,
-        threshold=ransac_thr, cancel=cancel)
+        threshold=ransac_thr, cancel=ctx.cancel)
 
     t1_inliers = t1m[mask] if ni >= 2 else t1m
     t2_inliers = t2m[mask] if ni >= 2 else t2m
     a, b = snap_speed_to_candidate(a, t1_inliers, t2_inliers)
 
-    pairs = [(ts1[g[0]], ts2[g[1]], g[2])
+    pairs = [(ctx.ts1[g[0]], ctx.ts2[g[1]], g[2])
              for g, m in zip(good, mask) if m]
     rmean, rmax, rend = residual_stats(pairs, a, b)
 
-    v1_span = float(ts1[-1] - ts1[0])
+    v1_span = float(ctx.ts1[-1] - ctx.ts1[0])
     inlier_span = 0.0
     if pairs:
         inlier_t1 = [p[0] for p in pairs]
         inlier_span = max(inlier_t1) - min(inlier_t1)
     coverage = inlier_span / v1_span if v1_span > 0 else 0.0
 
-    use_xcorr_fallback = (ni < 15 or rmean > 0.5 or coverage < 0.5)
-
-    if use_xcorr_fallback:
-        a_fb = xcorr_speed
+    if ni < 15 or rmean > 0.5 or coverage < 0.5:
+        a_fb = ctx.xcorr_speed
         if ni >= 2:
             b_fb = float(np.mean(t1_inliers - a_fb * t2_inliers))
         else:
-            b_fb = coarse_offset
-        pairs_fb = pairs
-        rmean_fb, rmax_fb, rend_fb = residual_stats(pairs_fb, a_fb, b_fb)
+            b_fb = ctx.coarse_offset
+        rmean_fb, rmax_fb, rend_fb = residual_stats(pairs, a_fb, b_fb)
         if ni < 4 or rmean_fb <= rmean:
             a, b = a_fb, b_fb
             rmean, rmax, rend = rmean_fb, rmax_fb, rend_fb
 
-    if progress_cb:
-        progress_cb("status", "Checking for content breaks...")
-    segments = detect_segments(pairs, xcorr_speed,
-                               coarse_offset=coarse_offset,
-                               d1=ds1_seg, d2=ds2_seg,
-                               effective_rate=ds_rate,
-                               alt_offsets=alt_offsets)
+    if ctx.progress_cb:
+        ctx.progress_cb("status", "Checking for content breaks...")
+    segments = detect_segments(pairs, ctx.xcorr_speed,
+                               coarse_offset=ctx.coarse_offset,
+                               d1=ctx.ds1_seg, d2=ctx.ds2_seg,
+                               effective_rate=ctx.ds_rate,
+                               alt_offsets=ctx.alt_offsets)
 
-    if segments and len(segments) > 1:
-        if visual_corrected:
-            from visual import visual_offset_score
-            all_match_visual = True
-            for seg in segments:
-                v1_s = seg["v1_start"]
-                v1_e = seg["v1_end"] if seg["v1_end"] < 1e9 else dur1
-                seg_dur = v1_e - v1_s
-                if seg_dur < 60:
-                    continue
-                score = visual_offset_score(
-                    fp1, fp2, coarse_offset, xcorr_speed,
-                    dur1, dur2, n_probes=3, cancel=cancel)
-                if score < 0.4:
-                    all_match_visual = False
-                    break
-            if all_match_visual:
-                segments = [{"v1_start": 0.0, "v1_end": float("inf"),
-                             "offset": coarse_offset,
-                             "n_inliers": len(pairs)}]
+    if segments and len(segments) > 1 and ctx.v1_has_video and ctx.v2_has_video:
+        if ctx.progress_cb:
+            ctx.progress_cb("status", "Validating segments visually...")
+        if validate_segments_visual(
+                ctx.fp1, ctx.fp2, segments,
+                ctx.coarse_offset - ctx.start_adj,
+                ctx.xcorr_speed, ctx.dur1, ctx.dur2, cancel=ctx.cancel):
+            segments = [{"v1_start": 0.0, "v1_end": float("inf"),
+                         "offset": ctx.coarse_offset,
+                         "n_inliers": len(pairs)}]
         else:
-            segments = refine_boundary_visual(
-                fp1, fp2, segments, xcorr_speed,
+            adj_segments = [dict(s, offset=s["offset"] - ctx.start_adj)
+                           for s in segments]
+            adj_segments = refine_boundary_visual(
+                ctx.fp1, ctx.fp2, adj_segments, ctx.xcorr_speed,
                 format_timestamp=format_timestamp,
-                progress_cb=progress_cb, cancel=cancel)
+                progress_cb=ctx.progress_cb, cancel=ctx.cancel)
+            for i, seg in enumerate(adj_segments):
+                segments[i]["v1_start"] = seg["v1_start"]
+                segments[i]["v1_end"] = seg["v1_end"]
             for si in range(len(segments)):
                 seg = segments[si]
-                v1_s = int(seg["v1_start"] * ds_rate)
+                v1_s = int(seg["v1_start"] * ctx.ds_rate)
                 v1_e_raw = seg["v1_end"]
                 if v1_e_raw >= 1e9:
-                    v1_e_raw = len(ds1_seg) / ds_rate
-                v1_e = int(v1_e_raw * ds_rate)
-                prev_off = segments[si - 1]["offset"] if si > 0 else coarse_offset
-                v2_est = (seg["v1_start"] - prev_off) / xcorr_speed
-                v2_s = max(0, int((v2_est - 300) * ds_rate))
-                v2_e = min(len(ds2_seg), int((v2_est + (v1_e_raw - seg["v1_start"]) + 300) * ds_rate))
-                d1_s = ds1_seg[v1_s:v1_e]
-                d2_s = ds2_seg[v2_s:v2_e]
-                if len(d1_s) > ds_rate * 60 and len(d2_s) > ds_rate * 60:
+                    v1_e_raw = len(ctx.ds1_seg) / ctx.ds_rate
+                v1_e = int(v1_e_raw * ctx.ds_rate)
+                prev_off = (segments[si - 1]["offset"] if si > 0
+                            else ctx.coarse_offset)
+                v2_est = (seg["v1_start"] - prev_off) / ctx.xcorr_speed
+                v2_s = max(0, int((v2_est - 300) * ctx.ds_rate))
+                v2_e = min(len(ctx.ds2_seg),
+                           int((v2_est + (v1_e_raw - seg["v1_start"]) + 300)
+                               * ctx.ds_rate))
+                d1_s = ctx.ds1_seg[v1_s:v1_e]
+                d2_s = ctx.ds2_seg[v2_s:v2_e]
+                if len(d1_s) > ctx.ds_rate * 60 and len(d2_s) > ctx.ds_rate * 60:
                     off_s, spd_s, _ = xcorr_on_downsampled(
-                        d1_s, d2_s, ds_rate, SPEED_CANDIDATES)
-                    if abs(spd_s - xcorr_speed) / xcorr_speed <= 0.005:
-                        v2_abs = v2_s / ds_rate
-                        segments[si]["offset"] = seg["v1_start"] + off_s - v2_abs * spd_s
+                        d1_s, d2_s, ctx.ds_rate, SPEED_CANDIDATES)
+                    if abs(spd_s - ctx.xcorr_speed) / ctx.xcorr_speed <= 0.005:
+                        v2_abs = v2_s / ctx.ds_rate
+                        segments[si]["offset"] = (seg["v1_start"] + off_s
+                                                  - v2_abs * spd_s)
 
-    if visual_corrected:
-        a = xcorr_speed
-        b = segments[0]["offset"]
-    elif segments and len(segments) > 1:
-        a = xcorr_speed
+    if ctx.visual_corrected or (segments and len(segments) > 1):
+        a = ctx.xcorr_speed
         b = segments[0]["offset"]
     elif segments:
         inlier_t1s = np.array([p[0] for p in pairs]) if pairs else np.array([])
@@ -365,32 +362,49 @@ def auto_align_audio(fp1, fp2, track1=0, track2=0,
         else:
             b = segments[0]["offset"]
 
-    atempo = 1.0 / a if abs(a) > 1e-9 else 1.0
+    for seg in segments:
+        seg["offset"] -= ctx.start_adj
+    b -= ctx.start_adj
 
-    return {
-        "speed_ratio": atempo, "offset": b,
-        "linear_a": a, "linear_b": b,
-        "inlier_count": ni, "total_candidates": len(good),
-        "inlier_pairs": pairs,
-        "v1_coverage": (float(ts1[0]), float(ts1[-1])),
-        "v2_coverage": (float(ts2[0]), float(ts2[-1])),
-        "v1_interval": float(ah1), "v2_interval": float(ah2),
-        "mode": "audio", "sync_tracks": (track1, track2),
-        "residual_mean": rmean, "residual_max": rmax,
-        "residual_end": rend,
-        "coarse_offset": coarse_offset,
-        "segments": segments,
-        "warnings": decode_warnings,
-        "audio_offset": audio_offset,
-        "audio_speed": audio_speed,
-        "visual_corrected": visual_corrected,
-        "visual_offset": visual_result["offset"] if visual_corrected else None,
-        "visual_speed": visual_result["speed"] if visual_corrected else None,
-        "visual_score": visual_result["score"] if visual_corrected else None,
-        "audio_visual_score": visual_result.get("audio_score") if visual_corrected else None,
-        "v1_lufs": v1_lufs,
-        "v2_lufs": v2_lufs,
-    }
+    ctx.mode = "audio"
+    ctx.a = a
+    ctx.b = b
+    ctx.ni = ni
+    ctx.total_good = len(good)
+    ctx.pairs = pairs
+    ctx.rmean = rmean
+    ctx.rmax = rmax
+    ctx.rend = rend
+    ctx.segments = segments
+    return True
 
 
-from merger import (find_ffmpeg_binary, merge_with_ffmpeg, remux_with_ffmpeg)
+def auto_align_audio(fp1, fp2, track1=0, track2=0,
+                      progress_cb=None, cancel=None,
+                      vocal_filter=False,
+                      use_dtw=False,
+                      v1_probe=None, v2_probe=None):
+    ctx = AlignContext(fp1, fp2, track1, track2,
+                       v1_probe, v2_probe, vocal_filter, use_dtw,
+                       progress_cb, cancel)
+    _decode_and_fingerprint(ctx)
+    _compute_coarse_alignment(ctx)
+
+    if ctx.use_dtw:
+        ctx.free_audio()
+        _align_dtw(ctx)
+    elif _align_ransac(ctx):
+        ctx.free_audio()
+    else:
+        ctx.free_audio()
+        ctx.mode = "audio-xcorr"
+        adj = ctx.coarse_offset - ctx.start_adj
+        ctx.a = ctx.xcorr_speed
+        ctx.b = adj
+        ctx.segments = [{"v1_start": 0.0, "v1_end": float("inf"),
+                         "offset": adj, "n_inliers": 0}]
+
+    return ctx.build_result()
+
+
+from merger import (find_ffmpeg_binary, merge_with_ffmpeg)

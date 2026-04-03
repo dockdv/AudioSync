@@ -17,7 +17,7 @@ from sync_engine import (
     format_timestamp,
     CancellableTask, CancelledError,
     auto_align_audio,
-    find_ffmpeg_binary, merge_with_ffmpeg, remux_with_ffmpeg,
+    find_ffmpeg_binary, merge_with_ffmpeg,
 )
 from _version import __version__
 
@@ -316,6 +316,13 @@ def api_align(sid):
     t1 = data.get("v1_track", 0)
     t2 = data.get("v2_track", 0)
     vocal_filter = data.get("vocal_filter", False)
+    use_dtw = data.get("use_dtw", False)
+    v1_probe = {"streams": data.get("v1_streams", []),
+                "audio": data.get("v1_tracks", []),
+                "duration": data.get("v1_duration", 0)}
+    v2_probe = {"streams": data.get("v2_streams", []),
+                "audio": data.get("v2_tracks", []),
+                "duration": data.get("v2_duration", 0)}
 
     if not v1 or not os.path.isfile(v1):
         return jsonify({"error": f"V1 not found: {v1}"}), 400
@@ -326,6 +333,7 @@ def api_align(sid):
         "v1_path": v1, "v2_path": v2,
         "v1_track": t1, "v2_track": t2,
         "vocal_filter": vocal_filter,
+        "use_dtw": use_dtw,
     })
     if err:
         return jsonify({"error": err}), 409
@@ -337,7 +345,9 @@ def api_align(sid):
         try:
             r = auto_align_audio(v1, v2, track1=t1, track2=t2,
                                  progress_cb=cb, cancel=cancel,
-                                 vocal_filter=vocal_filter)
+                                 vocal_filter=vocal_filter,
+                                 use_dtw=use_dtw,
+                                 v1_probe=v1_probe, v2_probe=v2_probe)
             result = {}
             for k, v in r.items():
                 if k == "inlier_pairs":
@@ -400,6 +410,10 @@ def api_merge(sid):
     v1_sync_track = data.get("v1_sync_track", 0)
     v1_lufs = data.get("v1_lufs", None)
     v2_lufs = data.get("v2_lufs", None)
+    v1_probe = {"streams": data.get("v1_streams", []),
+                "audio": data.get("v1_tracks", []),
+                "duration": v1_duration}
+    v2_probe = {"audio": data.get("v2_tracks", [])}
 
     if not v1 or not os.path.isfile(v1):
         return jsonify({"error": f"V1 not found: {v1}"}), 400
@@ -443,6 +457,7 @@ def api_merge(sid):
                 progress_cb=progress_cb, cancel=cancel,
                 gain_match=gain_match, v1_sync_track=v1_sync_track,
                 v1_lufs=v1_lufs, v2_lufs=v2_lufs,
+                v1_probe=v1_probe, v2_probe=v2_probe,
             )
             elapsed = time.monotonic() - t0
             mins, secs = divmod(int(elapsed), 60)
@@ -480,6 +495,9 @@ def api_remux(sid):
     sub_metadata = data.get("sub_metadata", [])
     default_audio = data.get("default_audio", None)
     audio_order = data.get("audio_order", None)
+    v1_probe = {"streams": data.get("v1_streams", []),
+                "audio": data.get("v1_tracks", []),
+                "duration": v1_duration}
 
     if not v1 or not os.path.isfile(v1):
         return jsonify({"error": f"V1 not found: {v1}"}), 400
@@ -503,7 +521,7 @@ def api_remux(sid):
             _update_task(sid, tid, progress=f"{kind}:{msg}")
 
         try:
-            remux_with_ffmpeg(
+            merge_with_ffmpeg(
                 v1_path=v1, out_path=out,
                 v1_stream_indices=v1_stream_indices,
                 v1_duration=v1_duration,
@@ -512,6 +530,7 @@ def api_remux(sid):
                 default_audio=default_audio,
                 audio_order=audio_order,
                 progress_cb=progress_cb, cancel=cancel,
+                v1_probe=v1_probe,
             )
             elapsed = time.monotonic() - t0
             mins, secs = divmod(int(elapsed), 60)

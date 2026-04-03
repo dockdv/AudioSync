@@ -6,15 +6,38 @@ import fflib
 from audio import SPEED_CANDIDATES
 
 
+def _dct2(block):
+    """Separable Type-II 2D DCT via numpy."""
+    n = block.shape[0]
+    ns = np.arange(n)
+    ks = np.arange(n)
+    basis = np.cos(np.pi * (2 * ns[:, None] + 1) * ks[None, :] / (2 * n))
+    return basis.T @ block @ basis
+
+
+def _phash(frame, hash_size=8, dct_size=32):
+    h, w = frame.shape
+    rh, rw = h // dct_size, w // dct_size
+    if rh >= 1 and rw >= 1:
+        cropped = frame[:rh * dct_size, :rw * dct_size]
+        resized = cropped.reshape(dct_size, rh, dct_size, rw).mean(axis=(1, 3))
+    else:
+        xs = np.linspace(0, w - 1, dct_size).astype(int)
+        ys = np.linspace(0, h - 1, dct_size).astype(int)
+        resized = frame[np.ix_(ys, xs)]
+    dct = _dct2(resized.astype(np.float64))
+    low = dct[:hash_size, :hash_size].ravel()
+    med = np.median(low[1:])
+    return low > med
+
+
 def frame_similarity(f1, f2):
     if f1 is None or f2 is None:
         return -1.0
-    f1n = f1.ravel() - np.mean(f1)
-    f2n = f2.ravel() - np.mean(f2)
-    s1, s2 = np.linalg.norm(f1n), np.linalg.norm(f2n)
-    if s1 < 1e-6 or s2 < 1e-6:
-        return 0.0
-    return float(np.dot(f1n, f2n) / (s1 * s2))
+    h1 = _phash(f1)
+    h2 = _phash(f2)
+    hamming = np.count_nonzero(h1 != h2)
+    return 1.0 - hamming / len(h1)
 
 
 def _extract_frame_safe(path, t):
@@ -22,6 +45,13 @@ def _extract_frame_safe(path, t):
         return fflib.extract_frame(path, t)
     except Exception:
         return None
+
+
+def _compare_at(v1_path, v2_path, t1, t2):
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        f1_fut = pool.submit(_extract_frame_safe, v1_path, t1)
+        f2_fut = pool.submit(_extract_frame_safe, v2_path, t2)
+        return frame_similarity(f1_fut.result(), f2_fut.result())
 
 
 def visual_offset_score(v1_path, v2_path, offset, speed, dur1, dur2,
@@ -37,12 +67,7 @@ def visual_offset_score(v1_path, v2_path, offset, speed, dur1, dur2,
         t2 = (t1 - offset) / speed
         if t2 < 0 or t2 > dur2:
             continue
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            f1_fut = pool.submit(_extract_frame_safe, v1_path, t1)
-            f2_fut = pool.submit(_extract_frame_safe, v2_path, t2)
-            f1 = f1_fut.result()
-            f2 = f2_fut.result()
-        sim = frame_similarity(f1, f2)
+        sim = _compare_at(v1_path, v2_path, t1, t2)
         if sim >= 0:
             sims.append(sim)
 
@@ -114,6 +139,47 @@ def verify_offset_visual(v1_path, v2_path, coarse_offset, xcorr_speed,
     return None
 
 
+def validate_segments_visual(v1_path, v2_path, segments, primary_offset,
+                             speed, dur1, dur2, cancel=None):
+    if len(segments) < 2:
+        return True
+    for si in range(len(segments) - 1):
+        boundary = segments[si]["v1_end"]
+        if boundary >= 1e9:
+            continue
+        probes_before = [boundary - d for d in [30, 15, 5]
+                         if boundary - d > 0]
+        probes_after = [boundary + d for d in [5, 15, 30]
+                        if boundary + d < dur1]
+        match_before, match_after = 0, 0
+        total_before, total_after = 0, 0
+        for t1 in probes_before:
+            if cancel and hasattr(cancel, 'check'):
+                cancel.check()
+            t2 = (t1 - primary_offset) / speed
+            if t2 < 0 or t2 > dur2:
+                continue
+            sim = _compare_at(v1_path, v2_path, t1, t2)
+            total_before += 1
+            if sim > 0.5:
+                match_before += 1
+        for t1 in probes_after:
+            if cancel and hasattr(cancel, 'check'):
+                cancel.check()
+            t2 = (t1 - primary_offset) / speed
+            if t2 < 0 or t2 > dur2:
+                continue
+            sim = _compare_at(v1_path, v2_path, t1, t2)
+            total_after += 1
+            if sim > 0.5:
+                match_after += 1
+        before_ok = total_before == 0 or match_before / total_before > 0.5
+        after_ok = total_after == 0 or match_after / total_after > 0.5
+        if not (before_ok and after_ok):
+            return False
+    return True
+
+
 def refine_boundary_visual(v1_path, v2_path, segments, speed,
                            format_timestamp=None, progress_cb=None,
                            cancel=None):
@@ -153,9 +219,7 @@ def refine_boundary_visual(v1_path, v2_path, segments, speed,
             if v2_t < 0:
                 lo = mid
                 continue
-            f1 = _extract_frame_safe(v1_path, mid)
-            f2 = _extract_frame_safe(v2_path, v2_t)
-            sim = frame_similarity(f1, f2)
+            sim = _compare_at(v1_path, v2_path, mid, v2_t)
             if sim > 0.5:
                 lo = mid
             else:
