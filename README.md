@@ -9,11 +9,12 @@ Useful when you have two recordings of the same content (e.g., different camera 
 - Auto-alignment via audio fingerprinting, cross-correlation, and RANSAC-based matching
 - Cross-language and cross-framerate support (e.g., 24fps Blu-ray + 25fps PAL DVD)
 - Vocal filter for cross-language matching (band-reject removes speech, keeps music/effects)
-- Piecewise alignment for content with breaks (censored scenes, different edits)
+- Automatic content break detection with arbitrary segment count (censored scenes, different edits)
 - Speed detection across 7 candidates (23.976/25, 24/25, 1.0, 25/24, etc.)
+- Real-time decode and merge progress reporting
 - Manual sync override (atempo and offset)
 - Multi-audio track selection and metadata editing
-- FFmpeg-based merge
+- FFmpeg-based merge with loudness matching
 - Cross-platform: Windows, Linux, macOS, Docker
 
 ## How It Works
@@ -22,27 +23,25 @@ Useful when you have two recordings of the same content (e.g., different camera 
 
 AudioSync uses a multi-stage pipeline to automatically determine the speed ratio and time offset between two video files:
 
-1. **Audio Decoding** — Full audio is decoded from both files using FFmpeg at 8kHz mono.
+1. **Audio Decoding** — Full audio is decoded from both files using FFmpeg at 8kHz mono, with real-time progress reporting.
 
 2. **Fingerprint Extraction** — Two types of fingerprints are extracted from windowed FFT frames:
-   - *Energy-band fingerprints*: Log-energy across 40 frequency bands (used for cross-correlation envelope matching).
-   - *Band-peak fingerprints*: Peak spectral magnitudes grouped into 128 coarse bands (used for point-to-point matching).
+   - *Mel-frequency fingerprints*: 128-band mel-scaled log-energy (primary matching).
+   - *Energy-band fingerprints*: Log-energy across 40 frequency bands (fallback matching).
 
 3. **Cross-Correlation with Speed Search** — Audio is downsampled to ~100Hz envelopes. For each of 7 speed candidates (covering PAL/NTSC/film conversions), V2's envelope is time-stretched and cross-correlated against V1 using FFT. The candidate with the highest correlation peak gives the coarse speed and offset estimate.
 
-4. **Fingerprint Matching** — Band-peak fingerprints are matched using cosine similarity with top-k retrieval, filtered by mutual nearest neighbor consistency, then filtered by the coarse offset/speed estimate.
+4. **Fingerprint Matching** — Fingerprints are matched using cosine similarity with top-k retrieval, filtered by mutual nearest neighbor consistency, then filtered by the coarse offset/speed estimate.
 
 5. **RANSAC Linear Fit** — A linear model `t1 = a * t2 + b` is fitted to the matched timestamp pairs using RANSAC (3000 iterations). The slope `a` gives the speed ratio, the intercept `b` gives the time offset. The speed is snapped to the nearest known candidate if within 0.5% tolerance.
 
 6. **Quality Fallback** — If RANSAC produces few inliers (<15), high residuals, or poor V1 coverage, the cross-correlation speed/offset is used instead.
 
-7. **Piecewise Segment Detection** — Split cross-correlation on downsampled audio detects content breaks (e.g., censored scenes that shift the offset partway through). Each segment gets its own offset, and the merge produces a piecewise-aligned output using FFmpeg's concat filter.
+7. **Content Break Detection** — A sliding-window cross-correlation scan across the full file detects content breaks (e.g., censored scenes, inserted/removed segments). Each detected segment gets its own offset, and the merge produces a piecewise-aligned output using FFmpeg's concat filter. Supports arbitrary numbers of segments with a minimum segment length of 60 seconds.
 
 ### Vocal Filter (Cross-Language Mode)
 
-When enabled, a hybrid two-pass approach is used:
-- **Pass 1**: Unfiltered audio for fingerprint extraction (better spectral matching).
-- **Pass 2**: Band-reject filtered audio (removes 300Hz–3kHz vocal range, keeps bass and treble) for cross-correlation and segment detection (more precise when dialogue differs between languages).
+When enabled, a band-reject filter is applied in-memory to the already-decoded audio (no re-decode needed). The filter removes the 300Hz–3kHz vocal range, keeping bass and treble for cross-correlation and segment detection. This improves alignment accuracy when dialogue differs between languages.
 
 ### Merge
 

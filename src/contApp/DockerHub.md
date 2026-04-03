@@ -9,21 +9,22 @@ Useful when you have two recordings of the same content (e.g., different camera 
 - Auto-alignment via audio fingerprinting, cross-correlation, and RANSAC-based matching
 - Cross-language and cross-framerate support (e.g., 24fps Blu-ray + 25fps PAL DVD)
 - Vocal filter for cross-language matching (band-reject removes speech, keeps music/effects)
-- Piecewise alignment for content with breaks (censored scenes, different edits)
+- Automatic content break detection with arbitrary segment count (censored scenes, different edits)
 - Speed detection across 7 candidates (23.976/25, 24/25, 1.0, 25/24, etc.)
+- Real-time decode and merge progress reporting
 - Manual sync override (atempo and offset)
 - Multi-audio track selection and metadata editing
-- FFmpeg-based merge
+- FFmpeg-based merge with loudness matching
 
 ## How It Works
 
 AudioSync uses a multi-stage alignment pipeline:
 
-1. **Audio Fingerprinting** — Energy-band and band-peak fingerprints are extracted from windowed FFT frames at 8kHz.
+1. **Audio Fingerprinting** — Mel-frequency and energy-band fingerprints are extracted from windowed FFT frames at 8kHz.
 2. **Cross-Correlation with Speed Search** — Downsampled audio envelopes (~100Hz) are cross-correlated across 7 speed candidates covering PAL/NTSC/film conversions.
 3. **RANSAC Linear Fit** — Matched fingerprint pairs are fitted to `t1 = a * t2 + b` using RANSAC to find the speed ratio and offset.
-4. **Piecewise Segment Detection** — Split cross-correlation detects content breaks (censored scenes, different edits) and aligns each segment independently.
-5. **Vocal Filter** — Optional band-reject filter (removes 300Hz-3kHz) for cross-language matching where dialogue differs but music/effects are shared.
+4. **Content Break Detection** — Sliding-window cross-correlation scan detects content breaks (censored scenes, different edits) and aligns each segment independently. Supports arbitrary numbers of segments.
+5. **Vocal Filter** — Optional in-memory band-reject filter (removes 300Hz-3kHz) for cross-language matching where dialogue differs but music/effects are shared.
 
 ## Screenshots
 
