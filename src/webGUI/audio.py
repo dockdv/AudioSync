@@ -405,9 +405,8 @@ def xcorr_on_downsampled(d1, d2, effective_rate, speed_candidates,
 
 def detect_segments(inlier_pairs, a, coarse_offset=0.0,
                     d1=None, d2=None, effective_rate=100.0,
-                    min_segment_sec=300, alt_offsets=None):
+                    min_segment_sec=60, alt_offsets=None):
     primary_offset = coarse_offset
-
     primary_seg = {
         "v1_start": 0.0, "v1_end": float("inf"),
         "offset": primary_offset, "n_inliers": len(inlier_pairs),
@@ -418,141 +417,187 @@ def detect_segments(inlier_pairs, a, coarse_offset=0.0,
 
     er = effective_rate
     v1_dur = len(d1) / er
-    if v1_dur < min_segment_sec * 3:
+    v2_dur = len(d2) / er
+    if v1_dur < min_segment_sec * 2:
         return [primary_seg]
 
-    def _xcorr_window(d1_slice, d2_slice):
-        if len(d1_slice) < 10 or len(d2_slice) < 10:
-            return None, None
-        return xcorr_on_downsampled(
-            d1_slice, d2_slice, er, SPEED_CANDIDATES)[:2]
+    # Step 1: sliding-window xcorr scan across V1
+    window_sec = 300.0
+    step_sec = 60.0
+    padding_sec = 300.0
+    min_window_samples = int(er * 60)
 
-    def _xcorr_at_split(v1_split_sec):
-        v1_s = int(v1_split_sec * er)
-        v2_est = (v1_split_sec - primary_offset) / a
-        v2_s = max(0, int((v2_est - 300) * er))
-        a1h = d1[v1_s:]
-        a2h = d2[v2_s:]
-        if len(a1h) < er * min_segment_sec or len(a2h) < er * min_segment_sec:
-            return None
-        off, spd = _xcorr_window(a1h, a2h)
-        if off is None or abs(spd - a) / a > 0.005:
-            return None
-        v2_abs = v2_s / er
-        return v1_split_sec + off - v2_abs * spd
+    scan_results = []  # (v1_center, offset, correlation)
 
-    off_half = _xcorr_at_split(v1_dur * 0.6)
-    if off_half is None or abs(off_half - primary_offset) < 10:
-        found_alt = False
-        if alt_offsets:
-            for alt_off, alt_spd, alt_corr in alt_offsets:
-                if abs(alt_off - primary_offset) < 10:
-                    continue
-                if alt_corr < 0.1:
-                    continue
-                v1_s = int(v1_dur * 0.6 * er)
-                v2_est = (v1_dur * 0.6 - alt_off) / a
-                v2_s = max(0, int((v2_est - 300) * er))
-                a1v = d1[v1_s:]
-                a2v = d2[v2_s:]
-                if len(a1v) >= er * min_segment_sec and len(a2v) >= er * min_segment_sec:
-                    off_v, spd_v = _xcorr_window(a1v, a2v)
-                    if off_v is not None and abs(spd_v - a) / a <= 0.005:
-                        v2_abs = v2_s / er
-                        verified_off = v1_dur * 0.6 + off_v - v2_abs * spd_v
-                        if abs(verified_off - primary_offset) >= 10:
-                            off_half = verified_off
-                            found_alt = True
-                            break
-        if not found_alt:
-            return [primary_seg]
-
-    second_offset = off_half
-
-    window_sec = min(600, v1_dur * 0.1)
-    scan_step = 300
-    last_primary_start = 0.0
-    first_secondary_start = v1_dur
-
-    for v1_start in range(int(v1_dur * 0.2), int(v1_dur * 0.7), scan_step):
-        v1_end_w = v1_start + window_sec
-        a1w = d1[int(v1_start * er):int(min(v1_end_w, v1_dur) * er)]
-        v2_est = (v1_start - primary_offset) / a
-        v2_s = max(0, int((v2_est - 120) * er))
-        v2_e = int((v2_est + window_sec + 120) * er)
-        a2w = d2[v2_s:min(v2_e, len(d2))]
-        if len(a1w) < er * 60 or len(a2w) < er * 60:
+    v1_pos = 0.0
+    while v1_pos + window_sec <= v1_dur:
+        d1_s = int(v1_pos * er)
+        d1_e = int((v1_pos + window_sec) * er)
+        d1_w = d1[d1_s:d1_e]
+        if len(d1_w) < min_window_samples:
+            v1_pos += step_sec
             continue
-        off_w, spd_w = _xcorr_window(a1w, a2w)
-        if off_w is None or abs(spd_w - a) / a > 0.005:
+
+        v1_center = v1_pos + window_sec / 2
+        v2_est = (v1_center - coarse_offset) / a
+        v2_s = max(0, int((v2_est - window_sec / 2 - padding_sec) * er))
+        v2_e = min(len(d2), int((v2_est + window_sec / 2 + padding_sec) * er))
+        d2_w = d2[v2_s:v2_e]
+
+        if len(d2_w) < min_window_samples:
+            v1_pos += step_sec
             continue
+
+        off, spd, corr = xcorr_on_downsampled(d1_w, d2_w, er, SPEED_CANDIDATES)[:3]
+        if corr < 0.3 or abs(spd - a) / max(a, 1e-9) > 0.005:
+            v1_pos += step_sec
+            continue
+
         v2_abs = v2_s / er
-        abs_off_w = v1_start + off_w - v2_abs * spd_w
+        abs_off = v1_pos + off - v2_abs * spd
+        scan_results.append((v1_center, abs_off, corr))
+        v1_pos += step_sec
 
-        if abs(abs_off_w - primary_offset) < 15:
-            last_primary_start = max(last_primary_start, float(v1_start))
-        elif abs(abs_off_w - second_offset) < 15:
-            first_secondary_start = min(first_secondary_start, float(v1_start))
+    if len(scan_results) < 2:
+        return [primary_seg]
 
-    boundary = last_primary_start + window_sec
-    if first_secondary_start < boundary:
-        boundary = (last_primary_start + window_sec + first_secondary_start) / 2
-    boundary = max(v1_dur * 0.1, min(v1_dur * 0.9, boundary))
+    # Step 2: cluster consecutive windows into segments by offset
+    offset_threshold = 10.0
+    min_cluster_windows = 3
+    clusters = []  # list of lists of (v1_center, offset, corr)
+    current = [scan_results[0]]
 
-    if first_secondary_start < v1_dur:
-        ref_half = 60
-        ref_step = 15
-        ref_start = max(v1_dur * 0.1, boundary - 600)
-        ref_end = min(v1_dur * 0.9, boundary + 600)
-        last_pri = ref_start
-        first_sec = ref_end
+    for i in range(1, len(scan_results)):
+        cur_offsets = [r[1] for r in current]
+        cur_median = float(np.median(cur_offsets))
+        if abs(scan_results[i][1] - cur_median) > offset_threshold:
+            clusters.append(current)
+            current = [scan_results[i]]
+        else:
+            current.append(scan_results[i])
+    clusters.append(current)
 
-        for v1_c in range(int(ref_start), int(ref_end), ref_step):
-            d1s = int(max(0, (v1_c - ref_half)) * er)
-            d1e = int(min(v1_dur, (v1_c + ref_half)) * er)
-            d1w = d1[d1s:d1e]
-            if len(d1w) < er * 20:
-                continue
-            n_out = len(d1w)
-            corrs = []
-            for test_off in [primary_offset, second_offset]:
-                v2_c = (v1_c - test_off) / a
-                v2s = max(0, int((v2_c - ref_half / a) * er))
-                v2e = min(len(d2), int((v2_c + ref_half / a) * er))
-                d2w = d2[v2s:v2e]
-                if len(d2w) < er * 20:
-                    corrs.append(-1.0)
+    # Absorb small clusters (< min_cluster_windows) into neighbors,
+    # then merge adjacent clusters with similar offsets.
+    if len(clusters) > 1:
+        merged_clusters = []
+        for cl in clusters:
+            if len(cl) < min_cluster_windows and merged_clusters:
+                merged_clusters[-1].extend(cl)
+            else:
+                merged_clusters.append(cl)
+        while (len(merged_clusters) > 1
+               and len(merged_clusters[-1]) < min_cluster_windows):
+            merged_clusters[-2].extend(merged_clusters[-1])
+            merged_clusters.pop()
+        # Merge adjacent clusters whose median offsets are close
+        final_clusters = [merged_clusters[0]]
+        for cl in merged_clusters[1:]:
+            prev_med = float(np.median([r[1] for r in final_clusters[-1]]))
+            cur_med = float(np.median([r[1] for r in cl]))
+            if abs(cur_med - prev_med) <= offset_threshold:
+                final_clusters[-1].extend(cl)
+            else:
+                final_clusters.append(cl)
+        clusters = final_clusters
+
+    if len(clusters) <= 1:
+        return [primary_seg]
+
+    # Step 3: refine boundaries between clusters
+    raw_segments = []
+    for ci, cluster in enumerate(clusters):
+        offsets = [r[1] for r in cluster]
+        med_off = float(np.median(offsets))
+        v1_start = cluster[0][0] - window_sec / 2
+        v1_end = cluster[-1][0] + window_sec / 2
+
+        # Refine boundary with previous segment
+        if ci > 0:
+            prev_off = raw_segments[-1]["offset"]
+            coarse_boundary = (raw_segments[-1]["_v1_last_center"]
+                               + cluster[0][0]) / 2
+            ref_lo = max(0, coarse_boundary - 120)
+            ref_hi = min(v1_dur, coarse_boundary + 120)
+            ref_step = 5.0
+            last_prev = ref_lo
+            first_cur = ref_hi
+            ref_win = 30.0
+
+            t = ref_lo
+            while t + ref_win <= ref_hi:
+                d1s = int(t * er)
+                d1e = int((t + ref_win) * er)
+                d1r = d1[d1s:d1e]
+                if len(d1r) < int(er * 10):
+                    t += ref_step
                     continue
-                d2r = np.interp(np.linspace(0, len(d2w) - 1, n_out),
-                                np.arange(len(d2w)), d2w)
-                c = float(np.corrcoef(d1w, d2r)[0, 1])
-                corrs.append(c if not np.isnan(c) else -1.0)
+                n_out = len(d1r)
+                best_corr = -1.0
+                best_test_off = prev_off
+                for test_off in [prev_off, med_off]:
+                    v2_c = (t + ref_win / 2 - test_off) / a
+                    v2s = max(0, int((v2_c - ref_win / 2) * er))
+                    v2e = min(len(d2), int((v2_c + ref_win / 2) * er))
+                    d2r = d2[v2s:v2e]
+                    if len(d2r) < int(er * 10):
+                        continue
+                    d2i = np.interp(np.linspace(0, len(d2r) - 1, n_out),
+                                    np.arange(len(d2r)), d2r)
+                    c = float(np.corrcoef(d1r, d2i)[0, 1])
+                    if np.isnan(c):
+                        c = -1.0
+                    if c > best_corr:
+                        best_corr = c
+                        best_test_off = test_off
+                if best_corr > 0.1:
+                    if abs(best_test_off - prev_off) < abs(best_test_off - med_off):
+                        last_prev = max(last_prev, t)
+                    else:
+                        first_cur = min(first_cur, t)
+                t += ref_step
 
-            if corrs[0] > corrs[1] and corrs[0] > 0.1:
-                last_pri = max(last_pri, float(v1_c))
-            elif corrs[1] > corrs[0] and corrs[1] > 0.1:
-                first_sec = min(first_sec, float(v1_c))
+            boundary = (last_prev + ref_win + first_cur) / 2
+            boundary = max(ref_lo, min(ref_hi, boundary))
+            raw_segments[-1]["v1_end"] = boundary
+            v1_start = boundary
 
-        boundary = (last_pri + first_sec) / 2
-        boundary = max(v1_dur * 0.1, min(v1_dur * 0.9, boundary))
+        # Count inlier pairs in this segment's range
+        seg_inliers = sum(1 for p in inlier_pairs
+                          if v1_start <= p[0] < v1_end)
 
-    first_offset = primary_offset
-    b_samp = int(boundary * er)
-    if b_samp > er * min_segment_sec:
-        v2_est_end = (boundary - primary_offset) / a
-        v2_e = min(len(d2), int((v2_est_end + 300) * er))
-        d1_first = d1[:b_samp]
-        d2_first = d2[:v2_e]
-        off_first, spd_first = _xcorr_window(d1_first, d2_first)
-        if off_first is not None and abs(spd_first - a) / a <= 0.005:
-            first_offset = off_first
+        raw_segments.append({
+            "v1_start": v1_start, "v1_end": v1_end,
+            "offset": med_off, "n_inliers": seg_inliers,
+            "_v1_last_center": cluster[-1][0],
+        })
 
-    return [
-        {"v1_start": 0.0, "v1_end": boundary,
-         "offset": first_offset, "n_inliers": len(inlier_pairs)},
-        {"v1_start": boundary, "v1_end": float("inf"),
-         "offset": second_offset, "n_inliers": 0},
-    ]
+    # Clean up internal keys
+    for seg in raw_segments:
+        seg.pop("_v1_last_center", None)
+
+    # Step 4: merge short segments into neighbors
+    merged = [raw_segments[0]]
+    for seg in raw_segments[1:]:
+        seg_dur = seg["v1_end"] - seg["v1_start"]
+        if seg_dur < min_segment_sec:
+            merged[-1]["v1_end"] = seg["v1_end"]
+            merged[-1]["n_inliers"] += seg["n_inliers"]
+        else:
+            merged.append(seg)
+
+    while len(merged) > 1:
+        first_dur = merged[0]["v1_end"] - merged[0]["v1_start"]
+        if first_dur < min_segment_sec:
+            merged[1]["v1_start"] = merged[0]["v1_start"]
+            merged[1]["n_inliers"] += merged[0]["n_inliers"]
+            merged.pop(0)
+        else:
+            break
+
+    merged[0]["v1_start"] = 0.0
+    merged[-1]["v1_end"] = float("inf")
+    return merged
 
 
 def snap_speed_to_candidate(a, t1_inliers, t2_inliers):

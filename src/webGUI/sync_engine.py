@@ -22,6 +22,38 @@ from visual import (
 from ctx import AlignContext
 
 
+def _bandreject(audio, sr, center=1000.0, width=2700.0):
+    """Apply FFT-domain bandreject filter in overlapping chunks."""
+    lo = center - width / 2
+    hi = center + width / 2
+    chunk = sr * 30  # 30-second chunks
+    overlap = sr * 2  # 2-second overlap
+    n = len(audio)
+    out = np.empty(n, dtype=np.float32)
+    pos = 0
+    while pos < n:
+        end = min(pos + chunk, n)
+        seg = audio[pos:end]
+        sn = len(seg)
+        freqs = np.fft.rfftfreq(sn, d=1.0 / sr)
+        mask = np.ones(len(freqs), dtype=np.float32)
+        mask[(freqs >= lo) & (freqs <= hi)] = 0.0
+        edge_lo = (freqs >= lo - 50) & (freqs < lo)
+        edge_hi = (freqs > hi) & (freqs <= hi + 50)
+        mask[edge_lo] = (lo - freqs[edge_lo]) / 50.0
+        mask[edge_hi] = (freqs[edge_hi] - hi) / 50.0
+        filtered = np.fft.irfft(np.fft.rfft(seg) * mask, n=sn).astype(np.float32)
+        if pos > 0 and overlap > 0:
+            ol = min(overlap, sn, pos)
+            ramp = np.linspace(0, 1, ol, dtype=np.float32)
+            out[pos:pos + ol] = out[pos:pos + ol] * (1 - ramp) + filtered[:ol] * ramp
+            out[pos + ol:end] = filtered[ol:]
+        else:
+            out[pos:end] = filtered
+        pos = end - overlap if end < n else n
+    return out
+
+
 def format_timestamp(seconds):
     if seconds is None or seconds != seconds:
         return "0:00.000"
@@ -114,23 +146,9 @@ def _compute_coarse_alignment(ctx):
 
     if ctx.vocal_filter:
         if ctx.progress_cb:
-            ctx.progress_cb("status", "Decoding band-filtered audio for xcorr...")
-        def _filt_cb(label):
-            def cb(pct):
-                if ctx.progress_cb:
-                    ctx.progress_cb("status", f"Decoding filtered {label}: {pct}%")
-            return cb
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            f1 = pool.submit(decode_full_audio, ctx.fp1, ctx.track1,
-                             AUDIO_SAMPLE_RATE, ctx.cancel, vocal_filter=True,
-                             duration=ctx.dur1, progress_cb=_filt_cb("V1"))
-            f2 = pool.submit(decode_full_audio, ctx.fp2, ctx.track2,
-                             AUDIO_SAMPLE_RATE, ctx.cancel, vocal_filter=True,
-                             duration=ctx.dur2, progress_cb=_filt_cb("V2"))
-            xcorr_a1, _ = f1.result()
-            xcorr_a2, _ = f2.result()
-        if ctx.cancel:
-            ctx.cancel.check()
+            ctx.progress_cb("status", "Applying vocal bandreject filter...")
+        xcorr_a1 = _bandreject(ctx.audio1, AUDIO_SAMPLE_RATE)
+        xcorr_a2 = _bandreject(ctx.audio2, AUDIO_SAMPLE_RATE)
     else:
         xcorr_a1 = ctx.audio1
         xcorr_a2 = ctx.audio2
