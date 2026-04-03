@@ -15,7 +15,6 @@ from audio import (
     mutual_nearest_neighbors, downsample_audio, filter_matches_by_offset,
     ransac_linear_fit, residual_stats, xcorr_on_downsampled,
     detect_segments, snap_speed_to_candidate, compute_lufs,
-    dtw_align, dtw_path_to_segments,
 )
 from visual import (
     verify_offset_visual, validate_segments_visual, refine_boundary_visual,
@@ -55,11 +54,18 @@ class CancellableTask:
 def _decode_and_fingerprint(ctx):
     if ctx.progress_cb:
         ctx.progress_cb("status", "Decoding V1 + V2 audio...")
+    def _dec_cb(label):
+        def cb(pct):
+            if ctx.progress_cb:
+                ctx.progress_cb("status", f"Decoding {label}: {pct}%")
+        return cb
     with ThreadPoolExecutor(max_workers=2) as pool:
         f1 = pool.submit(decode_full_audio, ctx.fp1, ctx.track1,
-                         AUDIO_SAMPLE_RATE, ctx.cancel, duration=ctx.dur1)
+                         AUDIO_SAMPLE_RATE, ctx.cancel, duration=ctx.dur1,
+                         progress_cb=_dec_cb("V1"))
         f2 = pool.submit(decode_full_audio, ctx.fp2, ctx.track2,
-                         AUDIO_SAMPLE_RATE, ctx.cancel, duration=ctx.dur2)
+                         AUDIO_SAMPLE_RATE, ctx.cancel, duration=ctx.dur2,
+                         progress_cb=_dec_cb("V2"))
         ctx.audio1, msgs1 = f1.result()
         ctx.audio2, msgs2 = f2.result()
     if ctx.cancel:
@@ -109,13 +115,18 @@ def _compute_coarse_alignment(ctx):
     if ctx.vocal_filter:
         if ctx.progress_cb:
             ctx.progress_cb("status", "Decoding band-filtered audio for xcorr...")
+        def _filt_cb(label):
+            def cb(pct):
+                if ctx.progress_cb:
+                    ctx.progress_cb("status", f"Decoding filtered {label}: {pct}%")
+            return cb
         with ThreadPoolExecutor(max_workers=2) as pool:
             f1 = pool.submit(decode_full_audio, ctx.fp1, ctx.track1,
                              AUDIO_SAMPLE_RATE, ctx.cancel, vocal_filter=True,
-                             duration=ctx.dur1)
+                             duration=ctx.dur1, progress_cb=_filt_cb("V1"))
             f2 = pool.submit(decode_full_audio, ctx.fp2, ctx.track2,
                              AUDIO_SAMPLE_RATE, ctx.cancel, vocal_filter=True,
-                             duration=ctx.dur2)
+                             duration=ctx.dur2, progress_cb=_filt_cb("V2"))
             xcorr_a1, _ = f1.result()
             xcorr_a2, _ = f2.result()
         if ctx.cancel:
@@ -146,47 +157,15 @@ def _compute_coarse_alignment(ctx):
 
     if ctx.v1_has_video and ctx.v2_has_video:
         ctx.visual_result = verify_offset_visual(
-            ctx.fp1, ctx.fp2, ctx.coarse_offset - ctx.start_adj,
-            ctx.xcorr_speed,
-            [(off - ctx.start_adj, spd, corr)
-             for off, spd, corr in ctx.alt_offsets],
+            ctx.fp1, ctx.fp2, ctx.coarse_offset,
+            ctx.xcorr_speed, ctx.alt_offsets,
             ctx.dur1, ctx.dur2,
             progress_cb=ctx.progress_cb, cancel=ctx.cancel)
         if ctx.visual_result is not None:
-            ctx.coarse_offset = ctx.visual_result["offset"] + ctx.start_adj
+            ctx.coarse_offset = ctx.visual_result["offset"]
             ctx.xcorr_speed = ctx.visual_result["speed"]
             ctx.alt_offsets = []
             ctx.visual_corrected = True
-
-
-def _align_dtw(ctx):
-    if ctx.progress_cb:
-        ctx.progress_cb("status",
-                         f"DTW alignment ({len(ctx.fp1_main)}x"
-                         f"{len(ctx.fp2_main)} frames)...")
-    warp_path = dtw_align(ctx.fp1_main, ctx.fp2_main, ctx.ts1, ctx.ts2,
-                          ctx.coarse_offset, ctx.xcorr_speed,
-                          cancel=ctx.cancel)
-    ctx.segments = dtw_path_to_segments(warp_path, ctx.xcorr_speed)
-    for seg in ctx.segments:
-        seg["offset"] -= ctx.start_adj
-
-    if len(ctx.segments) > 1 and ctx.v1_has_video and ctx.v2_has_video:
-        if ctx.progress_cb:
-            ctx.progress_cb("status", "Validating DTW segments visually...")
-        if validate_segments_visual(
-                ctx.fp1, ctx.fp2, ctx.segments, ctx.segments[0]["offset"],
-                ctx.xcorr_speed, ctx.dur1, ctx.dur2, cancel=ctx.cancel):
-            ctx.segments = [{"v1_start": 0.0, "v1_end": float("inf"),
-                             "offset": ctx.segments[0]["offset"],
-                             "n_inliers": sum(s["n_inliers"]
-                                              for s in ctx.segments)}]
-
-    ctx.mode = "audio-dtw"
-    ctx.a = ctx.xcorr_speed
-    ctx.b = ctx.segments[0]["offset"]
-    ctx.ni = sum(s["n_inliers"] for s in ctx.segments)
-    ctx.total_good = ctx.ni
 
 
 def _align_ransac(ctx):
@@ -312,19 +291,17 @@ def _align_ransac(ctx):
             ctx.progress_cb("status", "Validating segments visually...")
         if validate_segments_visual(
                 ctx.fp1, ctx.fp2, segments,
-                ctx.coarse_offset - ctx.start_adj,
+                ctx.coarse_offset,
                 ctx.xcorr_speed, ctx.dur1, ctx.dur2, cancel=ctx.cancel):
             segments = [{"v1_start": 0.0, "v1_end": float("inf"),
                          "offset": ctx.coarse_offset,
                          "n_inliers": len(pairs)}]
         else:
-            adj_segments = [dict(s, offset=s["offset"] - ctx.start_adj)
-                           for s in segments]
-            adj_segments = refine_boundary_visual(
-                ctx.fp1, ctx.fp2, adj_segments, ctx.xcorr_speed,
+            refine_segs = refine_boundary_visual(
+                ctx.fp1, ctx.fp2, segments, ctx.xcorr_speed,
                 format_timestamp=format_timestamp,
                 progress_cb=ctx.progress_cb, cancel=ctx.cancel)
-            for i, seg in enumerate(adj_segments):
+            for i, seg in enumerate(refine_segs):
                 segments[i]["v1_start"] = seg["v1_start"]
                 segments[i]["v1_end"] = seg["v1_end"]
             for si in range(len(segments)):
@@ -362,10 +339,6 @@ def _align_ransac(ctx):
         else:
             b = segments[0]["offset"]
 
-    for seg in segments:
-        seg["offset"] -= ctx.start_adj
-    b -= ctx.start_adj
-
     ctx.mode = "audio"
     ctx.a = a
     ctx.b = b
@@ -382,27 +355,22 @@ def _align_ransac(ctx):
 def auto_align_audio(fp1, fp2, track1=0, track2=0,
                       progress_cb=None, cancel=None,
                       vocal_filter=False,
-                      use_dtw=False,
                       v1_probe=None, v2_probe=None):
     ctx = AlignContext(fp1, fp2, track1, track2,
-                       v1_probe, v2_probe, vocal_filter, use_dtw,
+                       v1_probe, v2_probe, vocal_filter,
                        progress_cb, cancel)
     _decode_and_fingerprint(ctx)
     _compute_coarse_alignment(ctx)
 
-    if ctx.use_dtw:
-        ctx.free_audio()
-        _align_dtw(ctx)
-    elif _align_ransac(ctx):
+    if _align_ransac(ctx):
         ctx.free_audio()
     else:
         ctx.free_audio()
         ctx.mode = "audio-xcorr"
-        adj = ctx.coarse_offset - ctx.start_adj
         ctx.a = ctx.xcorr_speed
-        ctx.b = adj
+        ctx.b = ctx.coarse_offset
         ctx.segments = [{"v1_start": 0.0, "v1_end": float("inf"),
-                         "offset": adj, "n_inliers": 0}]
+                         "offset": ctx.coarse_offset, "n_inliers": 0}]
 
     return ctx.build_result()
 

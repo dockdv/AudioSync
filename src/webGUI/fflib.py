@@ -278,7 +278,7 @@ def get_sample_rate(handle, audio_track_index):
 
 
 def decode_audio(handle, audio_track_index, target_sr, vocal_filter=False,
-                 cancel=None):
+                 cancel=None, progress_cb=None, duration=0):
     ff = _require_ffmpeg()
     cmd = [ff, "-v", "error",
            "-i", handle,
@@ -293,8 +293,58 @@ def decode_audio(handle, audio_track_index, target_sr, vocal_filter=False,
             "-f", "f32le",
             "-acodec", "pcm_f32le",
             "pipe:1"]
-    raw, stderr = _run(cmd, timeout=3600, cancel=cancel, return_stderr=True)
-    warnings = stderr if stderr else None
+
+    if not progress_cb or duration <= 0:
+        raw, stderr = _run(cmd, timeout=3600, cancel=cancel, return_stderr=True)
+        warnings = stderr if stderr else None
+        if len(raw) == 0:
+            return np.array([], dtype=np.float32), warnings
+        return np.frombuffer(raw, dtype=np.float32).copy(), warnings
+
+    expected_bytes = int(duration * target_sr * 4)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            creationflags=_creationflags)
+    stderr_buf = []
+    t_err = threading.Thread(target=lambda: stderr_buf.append(
+        proc.stderr.read()), daemon=True)
+    t_err.start()
+
+    chunks = []
+    total_read = 0
+    last_pct = -1
+    try:
+        while True:
+            if cancel and cancel.is_cancelled:
+                proc.kill()
+                proc.wait(timeout=5)
+                t_err.join(timeout=2)
+                raise CancelledError("Cancelled")
+            chunk = proc.stdout.read(65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total_read += len(chunk)
+            pct = min(99, int(total_read / expected_bytes * 100))
+            if pct != last_pct:
+                progress_cb(pct)
+                last_pct = pct
+    except CancelledError:
+        raise
+    except Exception:
+        proc.kill()
+        proc.wait(timeout=5)
+        t_err.join(timeout=2)
+        raise
+
+    proc.wait(timeout=30)
+    t_err.join(timeout=5)
+    stderr_str = b"".join(stderr_buf).decode("utf-8", errors="replace").strip()
+    warnings = stderr_str if stderr_str else None
+
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed (code {proc.returncode}): {stderr_str}")
+
+    raw = b"".join(chunks)
     if len(raw) == 0:
         return np.array([], dtype=np.float32), warnings
     return np.frombuffer(raw, dtype=np.float32).copy(), warnings

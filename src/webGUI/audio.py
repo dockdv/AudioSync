@@ -31,8 +31,6 @@ XCORR_DOWNSAMPLE_RATE = 100
 SPEED_SNAP_TOLERANCE = 0.005
 
 AUDIO_N_MELS = 128
-DTW_BAND_SEC = 60.0
-DTW_MIN_SEGMENT_SEC = 120.0
 
 
 def compute_lufs(samples, sr):
@@ -73,10 +71,12 @@ def compute_lufs(samples, sr):
 
 
 def decode_full_audio(filepath, track_index, sr, cancel=None,
-                      vocal_filter=False, duration=0):
+                      vocal_filter=False, duration=0, progress_cb=None):
     audio, warnings = fflib.decode_audio(filepath, track_index, sr,
                                          vocal_filter=vocal_filter,
-                                         cancel=cancel)
+                                         cancel=cancel,
+                                         progress_cb=progress_cb,
+                                         duration=duration)
     if len(audio) == 0:
         raise RuntimeError("No audio data decoded")
     decoded_dur = len(audio) / sr
@@ -568,174 +568,3 @@ def snap_speed_to_candidate(a, t1_inliers, t2_inliers):
     a_snapped = best_candidate
     b_snapped = float(np.mean(t1_inliers - a_snapped * t2_inliers))
     return a_snapped, b_snapped
-
-
-def dtw_align(fp1, fp2, ts1, ts2, coarse_offset, coarse_speed,
-              band_sec=DTW_BAND_SEC, cancel=None):
-    n1, n2 = len(fp1), len(fp2)
-    if n1 == 0 or n2 == 0:
-        return np.empty((0, 2), dtype=np.float64)
-
-    hop1 = ts1[1] - ts1[0] if n1 > 1 else 0.2
-    hop2 = ts2[1] - ts2[0] if n2 > 1 else 0.2
-    w1 = int(band_sec / hop1) if hop1 > 0 else 300
-    w2 = int(band_sec / hop2) if hop2 > 0 else 300
-    band_w = max(w1, w2, 10)
-
-    def _expected_i(j):
-        t2_sec = ts2[j] if j < n2 else ts2[-1]
-        t1_sec = coarse_speed * t2_sec + coarse_offset
-        return int(round((t1_sec - ts1[0]) / hop1)) if hop1 > 0 else j
-
-    INF = np.float64(1e18)
-    cost_band = np.full((n2, 2 * band_w + 1), INF, dtype=np.float64)
-    dp = np.full((n2, 2 * band_w + 1), INF, dtype=np.float64)
-    trace = np.zeros((n2, 2 * band_w + 1), dtype=np.int8)
-
-    for j in range(n2):
-        if cancel and j % 500 == 0:
-            cancel.check()
-        center = _expected_i(j)
-        i_lo = max(0, center - band_w)
-        i_hi = min(n1, center + band_w + 1)
-        if i_lo >= n1 or i_hi <= 0:
-            continue
-        fp2_row = fp2[j]
-        for bi in range(2 * band_w + 1):
-            i = center - band_w + bi
-            if i < 0 or i >= n1:
-                continue
-            cost_band[j, bi] = 1.0 - float(np.dot(fp1[i], fp2_row))
-
-    center0 = _expected_i(0)
-    for bi in range(2 * band_w + 1):
-        i = center0 - band_w + bi
-        if 0 <= i < n1:
-            dp[0, bi] = cost_band[0, bi]
-
-    for j in range(1, n2):
-        if cancel and j % 500 == 0:
-            cancel.check()
-        center_prev = _expected_i(j - 1)
-        center_cur = _expected_i(j)
-        shift = center_cur - center_prev
-
-        for bi in range(2 * band_w + 1):
-            if cost_band[j, bi] >= INF:
-                continue
-            best = INF
-            best_dir = 0
-
-            bi_prev_diag = bi + shift - 1
-            if 0 <= bi_prev_diag < 2 * band_w + 1:
-                v = dp[j - 1, bi_prev_diag]
-                if v < best:
-                    best = v
-                    best_dir = 0
-
-            bi_prev_horiz = bi + shift
-            if 0 <= bi_prev_horiz < 2 * band_w + 1:
-                v = dp[j - 1, bi_prev_horiz]
-                if v < best:
-                    best = v
-                    best_dir = 1
-
-            if bi > 0 and dp[j, bi - 1] < best:
-                best = dp[j, bi - 1]
-                best_dir = 2
-
-            dp[j, bi] = cost_band[j, bi] + (best if best < INF else 0.0)
-            trace[j, bi] = best_dir
-
-    best_bi = -1
-    best_val = INF
-    for bi in range(2 * band_w + 1):
-        if dp[n2 - 1, bi] < best_val:
-            best_val = dp[n2 - 1, bi]
-            best_bi = bi
-
-    if best_bi < 0:
-        return np.column_stack([ts1[:min(n1, n2)], ts2[:min(n1, n2)]])
-
-    path = []
-    j, bi = n2 - 1, best_bi
-    while j >= 0:
-        center = _expected_i(j)
-        i = center - band_w + bi
-        i = max(0, min(n1 - 1, i))
-        path.append((float(ts1[i]), float(ts2[j])))
-        if j == 0:
-            break
-        d = trace[j, bi]
-        shift_back = _expected_i(j) - _expected_i(j - 1)
-        if d == 0:
-            bi = bi + shift_back - 1
-            j -= 1
-        elif d == 1:
-            bi = bi + shift_back
-            j -= 1
-        else:
-            bi -= 1
-        bi = max(0, min(2 * band_w, bi))
-
-    path.reverse()
-    return np.array(path, dtype=np.float64)
-
-
-def dtw_path_to_segments(warp_path, speed, min_segment_sec=DTW_MIN_SEGMENT_SEC):
-    if len(warp_path) < 2:
-        off = warp_path[0, 0] - speed * warp_path[0, 1] if len(warp_path) == 1 else 0.0
-        return [{"v1_start": 0.0, "v1_end": float("inf"),
-                 "offset": float(off), "n_inliers": len(warp_path)}]
-
-    offsets = warp_path[:, 0] - speed * warp_path[:, 1]
-
-    boundaries = [0]
-    window = max(5, len(offsets) // 200)
-    smoothed = np.convolve(offsets, np.ones(window) / window, mode='same')
-
-    for k in range(window, len(smoothed) - window):
-        if abs(smoothed[k] - smoothed[k - window]) > 2.0:
-            if not boundaries or k - boundaries[-1] > window:
-                boundaries.append(k)
-    boundaries.append(len(offsets))
-
-    raw_segments = []
-    for s in range(len(boundaries) - 1):
-        lo, hi = boundaries[s], boundaries[s + 1]
-        seg_offsets = offsets[lo:hi]
-        med_off = float(np.median(seg_offsets))
-        v1_start = float(warp_path[lo, 0])
-        v1_end = float(warp_path[min(hi, len(warp_path) - 1), 0])
-        raw_segments.append({
-            "v1_start": v1_start, "v1_end": v1_end,
-            "offset": med_off, "n_inliers": hi - lo,
-        })
-
-    if len(raw_segments) <= 1:
-        return [{"v1_start": 0.0, "v1_end": float("inf"),
-                 "offset": raw_segments[0]["offset"],
-                 "n_inliers": raw_segments[0]["n_inliers"]}]
-
-    merged = [raw_segments[0]]
-    for seg in raw_segments[1:]:
-        prev = merged[-1]
-        seg_dur = seg["v1_end"] - seg["v1_start"]
-        if seg_dur < min_segment_sec:
-            prev["v1_end"] = seg["v1_end"]
-            prev["n_inliers"] += seg["n_inliers"]
-        else:
-            merged.append(seg)
-
-    while len(merged) > 1:
-        first_dur = merged[0]["v1_end"] - merged[0]["v1_start"]
-        if first_dur < min_segment_sec:
-            merged[1]["v1_start"] = merged[0]["v1_start"]
-            merged[1]["n_inliers"] += merged[0]["n_inliers"]
-            merged.pop(0)
-        else:
-            break
-
-    merged[0]["v1_start"] = 0.0
-    merged[-1]["v1_end"] = float("inf")
-    return merged

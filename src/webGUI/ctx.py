@@ -10,7 +10,7 @@ def _speed_to_atempo(a):
 
 class AlignContext:
     def __init__(self, fp1, fp2, track1, track2,
-                 v1_probe, v2_probe, vocal_filter, use_dtw,
+                 v1_probe, v2_probe, vocal_filter,
                  progress_cb, cancel):
         self.fp1 = fp1
         self.fp2 = fp2
@@ -19,7 +19,6 @@ class AlignContext:
         self.v1_info = v1_probe or {}
         self.v2_info = v2_probe or {}
         self.vocal_filter = vocal_filter
-        self.use_dtw = use_dtw
         self.progress_cb = progress_cb
         self.cancel = cancel
 
@@ -30,15 +29,6 @@ class AlignContext:
         self.hop1 = self.dur1 / max_s if (self.dur1 > 0 and self.dur1 / hop > max_s) else hop
         self.hop2 = self.dur2 / max_s if (self.dur2 > 0 and self.dur2 / hop > max_s) else hop
         self.max_s = max_s
-
-        v1_st, v2_st = 0.0, 0.0
-        v1_audio = self.v1_info.get("audio", [])
-        if track1 < len(v1_audio):
-            v1_st = v1_audio[track1].get("start_time", 0.0)
-        v2_audio = self.v2_info.get("audio", [])
-        if track2 < len(v2_audio):
-            v2_st = v2_audio[track2].get("start_time", 0.0)
-        self.start_adj = v2_st - v1_st
 
         self.v1_has_video = any(s.get("codec_type") == "video"
                                 for s in self.v1_info.get("streams", []))
@@ -98,10 +88,10 @@ class AlignContext:
             "mode": self.mode, "sync_tracks": (self.track1, self.track2),
             "residual_mean": self.rmean, "residual_max": self.rmax,
             "residual_end": self.rend,
-            "coarse_offset": self.coarse_offset - self.start_adj,
+            "coarse_offset": self.coarse_offset,
             "segments": self.segments,
             "warnings": self.decode_warnings,
-            "audio_offset": self.audio_offset - self.start_adj,
+            "audio_offset": self.audio_offset,
             "audio_speed": self.audio_speed,
             "visual_corrected": vc,
             "visual_offset": vr["offset"] if vc else None,

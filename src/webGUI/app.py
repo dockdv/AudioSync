@@ -316,7 +316,6 @@ def api_align(sid):
     t1 = data.get("v1_track", 0)
     t2 = data.get("v2_track", 0)
     vocal_filter = data.get("vocal_filter", False)
-    use_dtw = data.get("use_dtw", False)
     v1_probe = {"streams": data.get("v1_streams", []),
                 "audio": data.get("v1_tracks", []),
                 "duration": data.get("v1_duration", 0)}
@@ -333,7 +332,6 @@ def api_align(sid):
         "v1_path": v1, "v2_path": v2,
         "v1_track": t1, "v2_track": t2,
         "vocal_filter": vocal_filter,
-        "use_dtw": use_dtw,
     })
     if err:
         return jsonify({"error": err}), 409
@@ -346,7 +344,6 @@ def api_align(sid):
             r = auto_align_audio(v1, v2, track1=t1, track2=t2,
                                  progress_cb=cb, cancel=cancel,
                                  vocal_filter=vocal_filter,
-                                 use_dtw=use_dtw,
                                  v1_probe=v1_probe, v2_probe=v2_probe)
             result = {}
             for k, v in r.items():
