@@ -179,6 +179,7 @@ def merge_with_ffmpeg(v1_path, v2_path=None, out_path="", atempo=1.0,
     tmp_nosubs = os.path.join(tmp_dir, "nosubs.mkv")
 
     try:
+        streamcopy_v2 = False
         if not is_remux:
             n_segments = len(segments) if segments else 1
             use_piecewise = (segments is not None and n_segments > 1)
@@ -193,18 +194,37 @@ def merge_with_ffmpeg(v1_path, v2_path=None, out_path="", atempo=1.0,
                                     f"Gain match: V1={v1_lufs:.1f} LUFS, "
                                     f"V2={v2_lufs:.1f} LUFS → {gain:+.1f} dB")
 
-            _merge_pass1_audio(ffmpeg_path, v2_path, tmp_audio, atempo, offset,
-                               v2_indices, v1_sr, v1_dur, segments,
-                               use_piecewise, progress_cb, cancel,
-                               v2_gains=v2_gains, v2_info=v2_info)
+            streamcopy_v2 = _can_streamcopy_v2(atempo, use_piecewise, v2_gains)
+
+            if streamcopy_v2:
+                if progress_cb:
+                    progress_cb("status",
+                                "Stream-copy mode: skipping audio re-encode")
+            else:
+                _merge_pass1_audio(ffmpeg_path, v2_path, tmp_audio, atempo,
+                                   offset, v2_indices, v1_sr, v1_dur,
+                                   segments, use_piecewise, progress_cb,
+                                   cancel, v2_gains=v2_gains,
+                                   v2_info=v2_info)
 
         mux_target = tmp_nosubs if has_subs else out_path
         _mux_pass(ffmpeg_path, v1_path, mux_target, v1_dur,
                   v1_stream_indices, v1_info, metadata_args,
                   progress_cb, cancel, skip_subs=has_subs,
                   default_audio=default_audio, audio_order=audio_order,
-                  tmp_audio=tmp_audio if not is_remux else None,
-                  v2_indices=v2_indices)
+                  tmp_audio=(tmp_audio
+                             if not is_remux and not streamcopy_v2
+                             else None),
+                  v2_indices=v2_indices,
+                  v2_streamcopy_path=(v2_path
+                                      if not is_remux and streamcopy_v2
+                                      else None),
+                  v2_streamcopy_offset=(offset
+                                        if not is_remux and streamcopy_v2
+                                        else None),
+                  v2_info=(v2_info
+                           if not is_remux and streamcopy_v2
+                           else None))
 
         if has_subs:
             _merge_pass3_subs(ffmpeg_path, mux_target, v1_path, out_path,
@@ -253,6 +273,17 @@ def _pick_aac_bitrate(source_br):
     capped = min(source_br, 192000)
     capped = max(capped, 64000)
     return f"{capped // 1000}k"
+
+
+def _can_streamcopy_v2(atempo, use_piecewise, v2_gains):
+    """Return True when V2 audio can be stream-copied (no re-encode)."""
+    if abs(atempo - 1.0) > 0.0001:
+        return False
+    if use_piecewise:
+        return False
+    if v2_gains:
+        return False
+    return True
 
 
 def _merge_pass1_audio(ffmpeg_path, v2_path, tmp_audio, atempo, offset,
@@ -353,10 +384,14 @@ def _mux_pass(ffmpeg_path, v1_path, out_path, v1_dur,
               v1_stream_indices, v1_info, metadata_args,
               progress_cb, cancel, skip_subs=False,
               default_audio=None, audio_order=None,
-              tmp_audio=None, v2_indices=None):
-    label = "muxing..." if tmp_audio else "muxing video + audio..."
+              tmp_audio=None, v2_indices=None,
+              v2_streamcopy_path=None, v2_streamcopy_offset=None,
+              v2_info=None):
+    is_streamcopy = v2_streamcopy_path is not None
+    label = "muxing..." if (tmp_audio or is_streamcopy) else "muxing video + audio..."
     if progress_cb:
-        progress_cb("status", f"Pass {'2' if tmp_audio else '1'}: {label}")
+        pass_num = "2" if tmp_audio else "1"
+        progress_cb("status", f"Pass {pass_num}: {label}")
 
     v2_indices = v2_indices or []
     v1_stream_types = {s["stream_index"]: s.get("codec_type", "unknown")
@@ -382,8 +417,27 @@ def _mux_pass(ffmpeg_path, v1_path, out_path, v1_dur,
 
     cmd = [ffmpeg_path, "-y", "-hide_banner"]
     cmd += ["-i", v1_path]
+
+    v2_input_map = {}
     if tmp_audio:
         cmd += ["-i", tmp_audio]
+    elif is_streamcopy:
+        v2_tracks = (v2_info or {}).get("audio", [])
+        next_input = 1
+        for tidx in v2_indices:
+            track_st = 0.0
+            for t in v2_tracks:
+                if t.get("index") == tidx:
+                    track_st = t.get("start_time", 0.0)
+                    break
+            track_delay = v2_streamcopy_offset + track_st
+            if track_delay < -0.001:
+                cmd += ["-ss", f"{abs(track_delay):.6f}"]
+            elif track_delay > 0.001:
+                cmd += ["-itsoffset", f"{track_delay:.6f}"]
+            cmd += ["-i", v2_streamcopy_path]
+            v2_input_map[tidx] = next_input
+            next_input += 1
 
     for si in v1_vid:
         cmd += ["-map", f"0:{si}"]
@@ -391,6 +445,9 @@ def _mux_pass(ffmpeg_path, v1_path, out_path, v1_dur,
     audio_maps = [f"0:{si}" for si in v1_aud]
     if tmp_audio:
         audio_maps += [f"1:a:{i}" for i in range(len(v2_indices))]
+    elif is_streamcopy:
+        audio_maps += [f"{v2_input_map[tidx]}:a:{tidx}"
+                       for tidx in v2_indices]
     if audio_order is not None and len(audio_order) == len(audio_maps):
         audio_maps = [audio_maps[i] for i in audio_order]
     for m in audio_maps:
