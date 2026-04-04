@@ -107,8 +107,10 @@ def _decode_and_fingerprint(ctx):
     for m in (msgs2 or []):
         ctx.decode_warnings.append(f"V2: {m}")
 
-    ctx.v1_lufs = compute_lufs(ctx.audio1, AUDIO_SAMPLE_RATE)
-    ctx.v2_lufs = compute_lufs(ctx.audio2, AUDIO_SAMPLE_RATE)
+    if ctx.progress_cb:
+        ctx.progress_cb("status", "Measuring loudness (LUFS)...")
+    ctx.v1_lufs = fflib.measure_lufs(ctx.fp1, ctx.track1, cancel=ctx.cancel)
+    ctx.v2_lufs = fflib.measure_lufs(ctx.fp2, ctx.track2, cancel=ctx.cancel)
 
     if ctx.progress_cb:
         ctx.progress_cb("status", "Mel FP: V1...")
@@ -166,6 +168,17 @@ def _compute_coarse_alignment(ctx):
     ctx.coarse_offset, ctx.xcorr_speed, _, ctx.alt_offsets = \
         xcorr_on_downsampled(ds1, ds2, ctx.ds_rate, SPEED_CANDIDATES,
                              return_alt_offsets=True)
+
+    v2_st = 0.0
+    for t in ctx.v2_info.get("audio", []):
+        if t.get("index") == ctx.track2:
+            v2_st = t.get("start_time", 0.0)
+            break
+    ctx.v2_start_delay = v2_st
+    if v2_st > 0.01:
+        ctx.coarse_offset -= v2_st
+        ctx.alt_offsets = [(off - v2_st, spd, corr)
+                           for off, spd, corr in ctx.alt_offsets]
 
     ctx.audio_offset = ctx.coarse_offset
     ctx.audio_speed = ctx.xcorr_speed
@@ -348,7 +361,11 @@ def _align_ransac(ctx):
 
     if ctx.visual_corrected or (segments and len(segments) > 1):
         a = ctx.xcorr_speed
-        b = segments[0]["offset"]
+        if ctx.visual_corrected and len(segments) == 1:
+            b = ctx.coarse_offset
+            segments[0]["offset"] = b
+        else:
+            b = segments[0]["offset"]
     elif segments:
         inlier_t1s = np.array([p[0] for p in pairs]) if pairs else np.array([])
         inlier_t2s = np.array([p[1] for p in pairs]) if pairs else np.array([])
@@ -389,6 +406,17 @@ def auto_align_audio(fp1, fp2, track1=0, track2=0,
         ctx.b = ctx.coarse_offset
         ctx.segments = [{"v1_start": 0.0, "v1_end": float("inf"),
                          "offset": ctx.coarse_offset, "n_inliers": 0}]
+
+    v2_st = 0.0
+    for t in ctx.v2_info.get("audio", []):
+        if t.get("index") == ctx.track2:
+            v2_st = t.get("start_time", 0.0)
+            break
+    if v2_st > 0.01 and not ctx.visual_corrected:
+        ctx.b -= v2_st
+        ctx.coarse_offset -= v2_st
+        for seg in (ctx.segments or []):
+            seg["offset"] -= v2_st
 
     return ctx.build_result()
 

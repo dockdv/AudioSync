@@ -104,7 +104,7 @@ def _run(cmd, check=True, timeout=30, cancel=None, return_stderr=False,
                 else:
                     buf.append(ch)
             try:
-                proc.wait(timeout=30)
+                proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
@@ -258,6 +258,26 @@ def probe(handle):
     duration = float(fmt.get("duration", 0))
 
     return {"audio": audio, "streams": streams, "duration": duration}
+
+
+_LUFS_SUMMARY_RE = re.compile(r"Integrated loudness:\s*\n\s*I:\s+([-\d.]+)\s+LUFS",
+                              re.MULTILINE)
+
+
+def measure_lufs(handle, audio_track_index, cancel=None):
+    """Measure integrated LUFS using FFmpeg ebur128 filter."""
+    ff = _require_ffmpeg()
+    cmd = [ff, "-v", "info",
+           "-i", handle,
+           "-map", f"0:a:{audio_track_index}",
+           "-af", "ebur128",
+           "-f", "null", "-"]
+    _, stderr = _run(cmd, timeout=3600, cancel=cancel, return_stderr=True,
+                     discard_stdout=True)
+    m = _LUFS_SUMMARY_RE.search(stderr or "")
+    if m:
+        return float(m.group(1))
+    return None
 
 
 def get_duration(handle):

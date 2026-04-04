@@ -1010,6 +1010,9 @@ function showAlignResults(r) {
     } else {
         txt += `Visual check:     confirmed\n`;
     }
+    if (r.v2_start_delay > 0.01) {
+        txt += `V2 start delay:   ${r.v2_start_delay.toFixed(3)}s\n`;
+    }
     txt += '\u2500'.repeat(38) + '\n';
     txt += `V1 hop: ${v1i.toFixed(2)}s  V2 hop: ${v2i.toFixed(2)}s\n`;
     txt += `V1: ${formatTimestamp(v1c[0])} - ${formatTimestamp(v1c[1])}\n`;

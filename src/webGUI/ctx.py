@@ -57,6 +57,7 @@ class AlignContext:
         self.ds_rate = 0.0
         self.visual_corrected = False
         self.visual_result = None
+        self.v2_start_delay = 0.0
 
         self.mode = ""
         self.a = 1.0
@@ -94,10 +95,11 @@ class AlignContext:
             "audio_offset": self.audio_offset,
             "audio_speed": self.audio_speed,
             "visual_corrected": vc,
-            "visual_offset": vr["offset"] if vc else None,
-            "visual_speed": vr["speed"] if vc else None,
-            "visual_score": vr["score"] if vc else None,
-            "audio_visual_score": vr.get("audio_score") if vc else None,
+            "visual_offset": vr["offset"] if vc and vr else None,
+            "visual_speed": vr["speed"] if vc and vr else None,
+            "visual_score": vr["score"] if vc and vr else None,
+            "audio_visual_score": vr.get("audio_score") if vc and vr else None,
             "v1_lufs": self.v1_lufs,
             "v2_lufs": self.v2_lufs,
+            "v2_start_delay": self.v2_start_delay,
         }

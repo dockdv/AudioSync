@@ -54,7 +54,7 @@ def _purge_stale_sessions():
 
 
 def _new_session():
-    sid = str(uuid.uuid4())[:8]
+    sid = str(uuid.uuid4())[:16]
     now = time.monotonic()
     with _sessions_lock:
         _purge_stale_sessions()

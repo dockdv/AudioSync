@@ -78,7 +78,8 @@ def _build_piecewise_filter(atempo, segments, v1_sr, v1_dur,
             next_input += 1
             gap_in = f"{gap_idx}:a:{v2_track}"
             gap_lbl = f"[_gap{i}]"
-            gf = [f"[{gap_in}]atrim=end={gap_v2:.6f}",
+            gf = [f"[{gap_in}]asetpts=PTS-STARTPTS",
+                  f"atrim=end={gap_v2:.6f}",
                   "asetpts=PTS-STARTPTS", "volume=0"]
             if base_filters:
                 gf.append(base_filters)
@@ -88,7 +89,8 @@ def _build_piecewise_filter(atempo, segments, v1_sr, v1_dur,
             next_input += 1
             aud_in = f"{aud_idx}:a:{v2_track}"
             aud_lbl = f"[_aud{i}]"
-            af = [f"[{aud_in}]atrim=start={trim_start_pre:.6f}:end={trim_end_pre:.6f}",
+            af = [f"[{aud_in}]asetpts=PTS-STARTPTS",
+                  f"atrim=start={trim_start_pre:.6f}:end={trim_end_pre:.6f}",
                   "asetpts=PTS-STARTPTS"]
             if base_filters:
                 af.append(base_filters)
@@ -102,8 +104,9 @@ def _build_piecewise_filter(atempo, segments, v1_sr, v1_dur,
             next_input += 1
             in_label = f"{input_idx}:a:{v2_track}"
 
-            parts = [f"[{in_label}]atrim=start={trim_start_pre:.6f}:end={trim_end_pre:.6f}"]
-            parts.append("asetpts=PTS-STARTPTS")
+            parts = [f"[{in_label}]asetpts=PTS-STARTPTS",
+                     f"atrim=start={trim_start_pre:.6f}:end={trim_end_pre:.6f}",
+                     "asetpts=PTS-STARTPTS"]
             if base_filters:
                 parts.append(base_filters)
 
@@ -260,6 +263,8 @@ def _merge_pass1_audio(ffmpeg_path, v2_path, tmp_audio, atempo, offset,
 
     v2_bitrates = _get_v2_bitrates(v2_path, v2_indices, v2_info=v2_info)
 
+    v2_tracks = v2_info.get("audio", []) if v2_info else []
+
     cmd = [ffmpeg_path, "-y", "-hide_banner"]
 
     if use_piecewise:
@@ -267,9 +272,20 @@ def _merge_pass1_audio(ffmpeg_path, v2_path, tmp_audio, atempo, offset,
         output_labels = []
         running_base = 0
         for i, tidx in enumerate(v2_indices):
+            track_st = 0.0
+            for t in v2_tracks:
+                if t.get("index") == tidx:
+                    track_st = t.get("start_time", 0.0)
+                    break
+            track_segments = segments
+            if track_st > 0.001:
+                track_segments = [
+                    {**seg, "offset": seg["offset"] + track_st}
+                    for seg in segments
+                ]
             track_gain = (v2_gains or {}).get(tidx)
             fg, out_label, n_inputs = _build_piecewise_filter(
-                atempo, segments, v1_sr, v1_dur,
+                atempo, track_segments, v1_sr, v1_dur,
                 v2_track=tidx, input_base=running_base,
                 gain_db=track_gain)
             if len(v2_indices) > 1:
@@ -296,16 +312,23 @@ def _merge_pass1_audio(ffmpeg_path, v2_path, tmp_audio, atempo, offset,
             cmd += ["-map", f"0:a:{tidx}"]
 
         for i, tidx in enumerate(v2_indices):
-            filters = []
-            if offset < -0.001:
-                trim_sec = abs(offset)
+            track_st = 0.0
+            for t in v2_tracks:
+                if t.get("index") == tidx:
+                    track_st = t.get("start_time", 0.0)
+                    break
+            track_delay = offset + track_st
+
+            filters = ["asetpts=PTS-STARTPTS"]
+            if track_delay < -0.001:
+                trim_sec = abs(track_delay)
                 if abs(atempo - 1.0) > 0.0001:
-                    trim_sec = abs(offset) * atempo
+                    trim_sec = abs(track_delay) * atempo
                 filters.append(f"atrim=start={trim_sec:.6f}")
                 filters.append("asetpts=PTS-STARTPTS")
             filters.extend(_atempo_chain(atempo))
-            if offset > 0.001:
-                delay_ms = int(round(offset * 1000))
+            if track_delay > 0.001:
+                delay_ms = int(round(track_delay * 1000))
                 filters.append(f"adelay={delay_ms}:all=1")
             filters.append(f"aresample={v1_sr}")
             track_gain = (v2_gains or {}).get(tidx)
