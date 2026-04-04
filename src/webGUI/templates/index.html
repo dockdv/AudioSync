@@ -311,6 +311,10 @@ input[type="checkbox"] { accent-color: var(--ac); }
             <span class="label" style="color:var(--dim)">ffprobe</span>
             <span class="text-mono text-sm" style="flex:1;color:{{ 'var(--green)' if ffprobe_path else 'var(--err)' }}">{{ ffprobe_path or 'not found' }}{{ ' — ' + ffprobe_version if ffprobe_version else '' }}</span>
         </div>
+        <div class="file-row">
+            <span class="label" style="color:var(--dim)">mkvmerge</span>
+            <span class="text-mono text-sm" style="flex:1;color:{{ 'var(--green)' if mkvmerge_path else 'var(--err)' }}">{{ mkvmerge_path or 'not found' }}{{ ' — ' + mkvmerge_version if mkvmerge_version else '' }}</span>
+        </div>
     </div>
 
     <div class="file-inputs">

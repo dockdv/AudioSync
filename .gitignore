@@ -6,6 +6,7 @@ ffmpeg
 ffmpeg.exe
 ffprobe
 ffprobe.exe
+mkvmerge.exe
 
 .venv/
 

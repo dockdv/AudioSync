@@ -421,4 +421,4 @@ def auto_align_audio(fp1, fp2, track1=0, track2=0,
     return ctx.build_result()
 
 
-from merger import (find_ffmpeg_binary, merge_with_ffmpeg)
+from merger import merge_with_ffmpeg

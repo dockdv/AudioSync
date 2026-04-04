@@ -10,10 +10,7 @@ import fflib
 from fflib import CancelledError
 from probe import get_duration, get_audio_sample_rate
 
-
-def find_ffmpeg_binary():
-    path = fflib.get_paths().get("ffmpeg", "")
-    return path if path and os.path.isfile(path) else None
+import mkvmerge as _mkvmerge_mod
 
 
 def _atempo_chain(atempo):
@@ -137,7 +134,7 @@ def merge_with_ffmpeg(v1_path, v2_path=None, out_path="", atempo=1.0,
                       v1_n_audio=1, v2_indices=None, v1_duration=0,
                       segments=None,
                       v1_stream_indices=None,
-                      ffmpeg_path=None, metadata_args=None,
+                      metadata_args=None,
                       sub_metadata_args=None,
                       default_audio=None,
                       audio_order=None,
@@ -145,10 +142,7 @@ def merge_with_ffmpeg(v1_path, v2_path=None, out_path="", atempo=1.0,
                       gain_match=False, v1_sync_track=0,
                       v1_lufs=None, v2_lufs=None,
                       v1_probe=None, v2_probe=None):
-    if not ffmpeg_path:
-        ffmpeg_path = find_ffmpeg_binary()
-    if not ffmpeg_path:
-        raise RuntimeError("ffmpeg binary not found")
+    ffmpeg_path = fflib.get_paths()["ffmpeg"]
 
     out_dir = os.path.dirname(out_path)
     if out_dir and not os.path.isdir(out_dir):
@@ -207,30 +201,54 @@ def merge_with_ffmpeg(v1_path, v2_path=None, out_path="", atempo=1.0,
                                    cancel, v2_gains=v2_gains,
                                    v2_info=v2_info)
 
-        mux_target = tmp_nosubs if has_subs else out_path
-        _mux_pass(ffmpeg_path, v1_path, mux_target, v1_dur,
-                  v1_stream_indices, v1_info, metadata_args,
-                  progress_cb, cancel, skip_subs=has_subs,
-                  default_audio=default_audio, audio_order=audio_order,
-                  tmp_audio=(tmp_audio
-                             if not is_remux and not streamcopy_v2
-                             else None),
-                  v2_indices=v2_indices,
-                  v2_streamcopy_path=(v2_path
-                                      if not is_remux and streamcopy_v2
-                                      else None),
-                  v2_streamcopy_offset=(offset
-                                        if not is_remux and streamcopy_v2
-                                        else None),
-                  v2_info=(v2_info
-                           if not is_remux and streamcopy_v2
-                           else None))
+        use_mkvmerge = out_path.lower().endswith(".mkv")
 
-        if has_subs:
-            _merge_pass3_subs(ffmpeg_path, mux_target, v1_path, out_path,
-                              v1_sub, v1_dur,
-                              progress_cb, cancel,
-                              sub_metadata_args=sub_metadata_args)
+        if use_mkvmerge:
+            _mkvmerge_mod.mux_to_mkv(
+                v1_path, out_path,
+                v1_info=v1_info,
+                tmp_audio=(tmp_audio
+                           if not is_remux and not streamcopy_v2
+                           else None),
+                v2_path=(v2_path
+                         if not is_remux and streamcopy_v2
+                         else None),
+                v2_indices=v2_indices if not is_remux else None,
+                v2_offset=(offset
+                           if not is_remux and streamcopy_v2
+                           else None),
+                v1_stream_indices=v1_stream_indices,
+                metadata_args=metadata_args,
+                sub_metadata_args=sub_metadata_args,
+                default_audio=default_audio,
+                audio_order=audio_order,
+                v1_duration=v1_dur,
+                progress_cb=progress_cb, cancel=cancel)
+        else:
+            mux_target = tmp_nosubs if has_subs else out_path
+            _mux_pass(ffmpeg_path, v1_path, mux_target, v1_dur,
+                      v1_stream_indices, v1_info, metadata_args,
+                      progress_cb, cancel, skip_subs=has_subs,
+                      default_audio=default_audio, audio_order=audio_order,
+                      tmp_audio=(tmp_audio
+                                 if not is_remux and not streamcopy_v2
+                                 else None),
+                      v2_indices=v2_indices,
+                      v2_streamcopy_path=(v2_path
+                                          if not is_remux and streamcopy_v2
+                                          else None),
+                      v2_streamcopy_offset=(offset
+                                            if not is_remux and streamcopy_v2
+                                            else None),
+                      v2_info=(v2_info
+                               if not is_remux and streamcopy_v2
+                               else None))
+
+            if has_subs:
+                _merge_pass3_subs(ffmpeg_path, mux_target, v1_path, out_path,
+                                  v1_sub, v1_dur,
+                                  progress_cb, cancel,
+                                  sub_metadata_args=sub_metadata_args)
     finally:
         if os.path.isdir(tmp_dir):
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -276,7 +294,6 @@ def _pick_aac_bitrate(source_br):
 
 
 def _can_streamcopy_v2(atempo, use_piecewise, v2_gains):
-    """Return True when V2 audio can be stream-copied (no re-encode)."""
     if abs(atempo - 1.0) > 0.0001:
         return False
     if use_piecewise:

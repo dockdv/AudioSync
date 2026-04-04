@@ -10,7 +10,7 @@ WORKDIR /app
 COPY src/webGUI/ ./src/webGUI/
 
 RUN --mount=type=secret,id=ffmpeg_pat \
-    apt-get update && apt-get install -y --no-install-recommends curl jq && \
+    apt-get update && apt-get install -y --no-install-recommends curl jq mkvtoolnix && \
     ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "linuxarm64"; else echo "linux64"; fi) && \
     TOKEN=$(cat /run/secrets/ffmpeg_pat) && \
     RELEASE_URL="https://api.github.com/repos/dockdv/ffmpeg-bin/releases/tags/latest" && \

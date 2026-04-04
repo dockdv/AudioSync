@@ -184,17 +184,6 @@ def _run(cmd, check=True, timeout=30, cancel=None, return_stderr=False,
     return stdout
 
 
-def _require_ffprobe():
-    if not _ffprobe:
-        raise RuntimeError("ffprobe not found. Set FFPROBE_PATH or install ffmpeg.")
-    return _ffprobe
-
-
-def _require_ffmpeg():
-    if not _ffmpeg:
-        raise RuntimeError("ffmpeg not found. Set FFMPEG_PATH or install ffmpeg.")
-    return _ffmpeg
-
 
 def _normalize_lang(code):
     from probe import normalize_language
@@ -202,7 +191,7 @@ def _normalize_lang(code):
 
 
 def probe(handle):
-    fp = _require_ffprobe()
+    fp = _ffprobe
     raw = _run([fp, "-v", "quiet", "-print_format", "json",
                 "-show_format", "-show_streams", handle], timeout=60)
     data = json.loads(raw)
@@ -266,7 +255,7 @@ _LUFS_SUMMARY_RE = re.compile(r"Integrated loudness:\s*\n\s*I:\s+([-\d.]+)\s+LUF
 
 def measure_lufs(handle, audio_track_index, cancel=None):
     """Measure integrated LUFS using FFmpeg ebur128 filter."""
-    ff = _require_ffmpeg()
+    ff = _ffmpeg
     cmd = [ff, "-v", "info",
            "-i", handle,
            "-map", f"0:a:{audio_track_index}",
@@ -281,7 +270,7 @@ def measure_lufs(handle, audio_track_index, cancel=None):
 
 
 def get_duration(handle):
-    fp = _require_ffprobe()
+    fp = _ffprobe
     raw = _run([fp, "-v", "quiet", "-print_format", "json",
                 "-show_format", handle], timeout=30)
     data = json.loads(raw)
@@ -299,7 +288,7 @@ def get_sample_rate(handle, audio_track_index):
 
 def decode_audio(handle, audio_track_index, target_sr, vocal_filter=False,
                  cancel=None, progress_cb=None, duration=0):
-    ff = _require_ffmpeg()
+    ff = _ffmpeg
     cmd = [ff, "-v", "error",
            "-i", handle,
            "-map", f"0:a:{audio_track_index}"]
@@ -374,7 +363,7 @@ FRAME_W, FRAME_H = 160, 120
 
 
 def extract_frame(handle, timestamp, width=FRAME_W, height=FRAME_H):
-    ff = _require_ffmpeg()
+    ff = _ffmpeg
     cmd = [ff, "-v", "quiet",
            "-ss", f"{timestamp:.3f}",
            "-i", handle,

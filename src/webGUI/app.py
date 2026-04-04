@@ -17,7 +17,7 @@ from sync_engine import (
     format_timestamp,
     CancellableTask, CancelledError,
     auto_align_audio,
-    find_ffmpeg_binary, merge_with_ffmpeg,
+    merge_with_ffmpeg,
 )
 from _version import __version__
 
@@ -153,8 +153,10 @@ def _serialize_session(sess):
 
 @app.route("/")
 def index():
+    import mkvmerge as _mkv
     paths = fflib.get_paths()
     versions = fflib.library_versions
+    mkv_ver = _mkv.version_info().get("mkvmerge", "")
     return render_template("index.html",
                            app_title=APP_TITLE,
                            all_languages=ALL_LANGUAGES,
@@ -162,7 +164,9 @@ def index():
                            ffmpeg_path=paths["ffmpeg"],
                            ffprobe_path=paths["ffprobe"],
                            ffmpeg_version=versions.get("ffmpeg", ""),
-                           ffprobe_version=versions.get("ffprobe", ""))
+                           ffprobe_version=versions.get("ffprobe", ""),
+                           mkvmerge_path=_mkv.get_path().get("mkvmerge", ""),
+                           mkvmerge_version=mkv_ver)
 
 
 @app.route("/api/browse", methods=["POST"])
@@ -592,15 +596,30 @@ if __name__ == "__main__":
     print("  Audio Sync & Merge -- Web Interface")
     print("=" * 50)
 
-    libs = check_av()
-    info = libs.get("fflib", (False, "", ""))
-    if info[0]:
-        print(f"  fflib: {info[1]}")
-    else:
-        print(f"  WARNING: fflib not available -- {info[1]}")
+    import mkvmerge as mkvmerge_mod
 
-    ffmpeg = find_ffmpeg_binary()
-    print(f"  ffmpeg:  {ffmpeg or 'not found'}")
+    paths = fflib.get_paths()
+    mkv_path = mkvmerge_mod.get_path().get("mkvmerge", "")
+
+    print(f"  ffmpeg:   {paths.get('ffmpeg') or 'NOT FOUND'}")
+    print(f"  ffprobe:  {paths.get('ffprobe') or 'NOT FOUND'}")
+    print(f"  mkvmerge: {mkv_path or 'NOT FOUND'}")
+
+    missing = []
+    if not paths.get("ffmpeg"):
+        missing.append("ffmpeg  (set FFMPEG_PATH or place in script dir)")
+    if not paths.get("ffprobe"):
+        missing.append("ffprobe (set FFPROBE_PATH or place in script dir)")
+    if not mkv_path:
+        missing.append("mkvmerge (set MKVMERGE_PATH or place in script dir)")
+
+    if missing:
+        print()
+        print("  ERROR: Required binaries not found:")
+        for m in missing:
+            print(f"    - {m}")
+        sys.exit(1)
+
     print()
     print("  Open http://localhost:5000 in your browser")
     print("=" * 50)
