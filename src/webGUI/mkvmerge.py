@@ -213,59 +213,68 @@ def mux_to_mkv(v1_path, out_path,
         cmd += ["--no-subtitles"]
 
     n_v1_audio = len(v1_aud_tids)
-    if metadata_args:
-        for i, tid in enumerate(v1_aud_tids):
-            if i < len(metadata_args):
-                meta = metadata_args[i]
-                lang = meta.get("language") or "und"
-                title = meta.get("title") or ""
-                cmd += ["--language", f"{tid}:{lang}"]
-                if title:
-                    cmd += ["--track-name", f"{tid}:{title}"]
+    v2_aud_tids = []
+    file_id_v2 = 1
+
+    if tmp_audio:
+        v2_aud_tids = list(range(len(v2_indices)))
+    elif v2_path:
+        v2_aud_tids = list(v2_indices)
+
+    all_audio_tids = list(v1_aud_tids) + list(v2_aud_tids)
+    if audio_order is not None and len(audio_order) == len(all_audio_tids):
+        all_audio_tids_ordered = [all_audio_tids[i] for i in audio_order]
+    else:
+        all_audio_tids_ordered = all_audio_tids
+
+    src_to_meta = {}
+    if metadata_args and audio_order is not None and len(audio_order) == len(all_audio_tids):
+        for out_pos, src_idx in enumerate(audio_order):
+            if out_pos < len(metadata_args):
+                src_to_meta[src_idx] = metadata_args[out_pos]
+    elif metadata_args:
+        for src_idx in range(len(all_audio_tids)):
+            if src_idx < len(metadata_args):
+                src_to_meta[src_idx] = metadata_args[src_idx]
+
+    default_tid = None
+    if default_audio is not None and 0 <= default_audio < len(all_audio_tids_ordered):
+        default_tid = all_audio_tids_ordered[default_audio]
+
+    for src_idx, tid in enumerate(v1_aud_tids):
+        meta = src_to_meta.get(src_idx)
+        if meta:
+            cmd += ["--language", f"{tid}:{meta.get('language') or 'und'}"]
+            if meta.get("title"):
+                cmd += ["--track-name", f"{tid}:{meta['title']}"]
+        if default_audio is not None:
+            flag = "1" if tid == default_tid else "0"
+            cmd += ["--default-track-flag", f"{tid}:{flag}"]
 
     if sub_metadata_args:
         for i, tid in enumerate(v1_sub_tids):
             if i < len(sub_metadata_args):
                 meta = sub_metadata_args[i]
-                lang = meta.get("language") or "und"
-                title = meta.get("title") or ""
-                cmd += ["--language", f"{tid}:{lang}"]
-                if title:
-                    cmd += ["--track-name", f"{tid}:{title}"]
-
-    if default_audio is not None:
-        for tid in v1_aud_tids:
-            cmd += ["--default-track-flag", f"{tid}:0"]
+                cmd += ["--language", f"{tid}:{meta.get('language') or 'und'}"]
+                if meta.get("title"):
+                    cmd += ["--track-name", f"{tid}:{meta['title']}"]
 
     cmd.append(v1_path)
 
-    v2_aud_tids = []
-    file_id_v2 = 1
-
     if tmp_audio:
         v2_cmd = ["--no-video", "--no-subtitles"]
-        v2_aud_tids = list(range(len(v2_indices)))
-
-        if metadata_args:
-            for i, tid in enumerate(v2_aud_tids):
-                meta_idx = n_v1_audio + i
-                if meta_idx < len(metadata_args):
-                    meta = metadata_args[meta_idx]
-                    lang = meta.get("language") or "und"
-                    title = meta.get("title") or ""
-                    v2_cmd += ["--language", f"{tid}:{lang}"]
-                    if title:
-                        v2_cmd += ["--track-name", f"{tid}:{title}"]
-
-        if default_audio is not None:
-            for tid in v2_aud_tids:
-                v2_cmd += ["--default-track-flag", f"{tid}:0"]
-
+        for i, tid in enumerate(v2_aud_tids):
+            meta = src_to_meta.get(n_v1_audio + i)
+            if meta:
+                v2_cmd += ["--language", f"{tid}:{meta.get('language') or 'und'}"]
+                if meta.get("title"):
+                    v2_cmd += ["--track-name", f"{tid}:{meta['title']}"]
+            if default_audio is not None:
+                flag = "1" if tid == default_tid else "0"
+                v2_cmd += ["--default-track-flag", f"{tid}:{flag}"]
         cmd += v2_cmd + [tmp_audio]
 
     elif v2_path:
-        v2_aud_tids = list(v2_indices)
-
         v2_cmd = ["--no-video", "--no-subtitles"]
 
         if v2_aud_tids:
@@ -277,38 +286,17 @@ def mux_to_mkv(v1_path, out_path,
             for tid in v2_aud_tids:
                 v2_cmd += ["--sync", f"{tid}:{delay_ms}"]
 
-        if metadata_args:
-            for i, tid in enumerate(v2_aud_tids):
-                meta_idx = n_v1_audio + i
-                if meta_idx < len(metadata_args):
-                    meta = metadata_args[meta_idx]
-                    lang = meta.get("language") or "und"
-                    title = meta.get("title") or ""
-                    v2_cmd += ["--language", f"{tid}:{lang}"]
-                    if title:
-                        v2_cmd += ["--track-name", f"{tid}:{title}"]
-
-        if default_audio is not None:
-            for tid in v2_aud_tids:
-                v2_cmd += ["--default-track-flag", f"{tid}:0"]
+        for i, tid in enumerate(v2_aud_tids):
+            meta = src_to_meta.get(n_v1_audio + i)
+            if meta:
+                v2_cmd += ["--language", f"{tid}:{meta.get('language') or 'und'}"]
+                if meta.get("title"):
+                    v2_cmd += ["--track-name", f"{tid}:{meta['title']}"]
+            if default_audio is not None:
+                flag = "1" if tid == default_tid else "0"
+                v2_cmd += ["--default-track-flag", f"{tid}:{flag}"]
 
         cmd += v2_cmd + [v2_path]
-
-    all_audio_tids = list(v1_aud_tids) + list(v2_aud_tids)
-    if audio_order is not None and len(audio_order) == len(all_audio_tids):
-        all_audio_tids_ordered = [all_audio_tids[i] for i in audio_order]
-    else:
-        all_audio_tids_ordered = all_audio_tids
-
-    if (default_audio is not None
-            and 0 <= default_audio < len(all_audio_tids_ordered)):
-        default_tid = all_audio_tids_ordered[default_audio]
-        target_val = f"{default_tid}:0"
-        replacement = f"{default_tid}:1"
-        for i, arg in enumerate(cmd):
-            if arg == target_val and i > 0 and cmd[i - 1] == "--default-track-flag":
-                cmd[i] = replacement
-                break
 
     order_parts = []
 
