@@ -184,6 +184,7 @@ def index():
                            ffprobe_path=paths["ffprobe"],
                            ffmpeg_version=versions.get("ffmpeg", ""),
                            ffprobe_version=versions.get("ffprobe", ""),
+                           hwaccel=paths.get("hwaccel", "none"),
                            mkvmerge_path=_mkv.get_path().get("mkvmerge", ""),
                            mkvmerge_version=mkv_ver)
 
@@ -324,6 +325,7 @@ def api_align(sid):
     t1 = data.get("v1_track", 0)
     t2 = data.get("v2_track", 0)
     vocal_filter = data.get("vocal_filter", False)
+    measure_lufs = data.get("measure_lufs", False)
     v1_info = {"streams": data.get("v1_streams", []),
                 "audio": data.get("v1_tracks", []),
                 "duration": data.get("v1_duration", 0)}
@@ -359,6 +361,7 @@ def api_align(sid):
                 ctx.align_track1 = t1
                 ctx.align_track2 = t2
                 ctx.vocal_filter = vocal_filter
+                ctx.measure_lufs = measure_lufs
                 ctx.v1_info = v1_info
                 ctx.v2_info = v2_info
                 ctx.progress_cb = cb
@@ -586,6 +589,107 @@ def api_task_cancel(sid, tid):
     return jsonify({"error": "Task not found"}), 404
 
 
+@app.route("/api/session/<sid>/test-interleave", methods=["POST"])
+def api_test_interleave(sid):
+    data = request.get_json() or {}
+    filepath = data.get("filepath", "")
+    if not filepath or not os.path.isfile(filepath):
+        return jsonify({"error": f"File not found: {filepath}"}), 400
+
+    tid, cancel, err = _start_task(sid, "test-interleave", {
+        "v1_path": filepath,
+    })
+    if err:
+        return jsonify({"error": err}), 409
+
+    def go():
+        try:
+            def cb(kind, msg):
+                _update_task(sid, tid, progress=msg)
+
+            cb("status", "Probing stream info...")
+            info = fflib.probe(filepath)
+            stream_map = {}
+            for s in info.get("streams", []):
+                stream_map[s["stream_index"]] = s
+
+            cb("status", "Reading packet timestamps...")
+            packets = fflib.probe_packets(filepath, cancel=cancel,
+                                          progress_cb=cb)
+
+            total_packets = sum(len(v) for v in packets.values())
+            duration = info.get("duration", 0)
+            lines = []
+            lines.append(f"Interleave analysis: {total_packets:,} packets across {len(packets)} streams")
+
+            issues = []
+            for idx in sorted(packets.keys()):
+                dts_list = packets[idx]
+                s = stream_map.get(idx, {})
+                codec_type = s.get("codec_type", "unknown")
+                codec = s.get("codec", "?")
+                label = f"#{idx} {codec_type} ({codec})"
+
+                if len(dts_list) < 2:
+                    lines.append(f"  {label}: {len(dts_list)} packet(s) - skipped")
+                    continue
+
+                gaps = [dts_list[i+1] - dts_list[i] for i in range(len(dts_list)-1)]
+                gaps_sorted = sorted(gaps)
+                median_gap = gaps_sorted[len(gaps_sorted) // 2]
+                max_gap = gaps_sorted[-1]
+                first_dts = dts_list[0]
+                last_dts = dts_list[-1]
+                span = last_dts - first_dts
+
+                lines.append(f"  {label}: {len(dts_list):,} pkts, "
+                             f"span {first_dts:.1f}s-{last_dts:.1f}s, "
+                             f"median gap {median_gap:.3f}s, max gap {max_gap:.3f}s")
+
+                # Detect late first packet
+                if first_dts > 5.0 and codec_type in ("audio", "subtitle"):
+                    issues.append(f"ISSUE: {label} first packet at {first_dts:.1f}s "
+                                  f"(late start, may stall muxer)")
+
+                # Detect clustering: max gap >> median gap
+                if max_gap > 5.0 and median_gap < 1.0 and codec_type in ("audio", "subtitle"):
+                    issues.append(f"ISSUE: {label} has {max_gap:.1f}s gap "
+                                  f"(vs {median_gap:.3f}s median) - "
+                                  f"packets may be clustered")
+
+                # Detect sparse streams that could stall interleaving
+                if codec_type == "subtitle" and median_gap > 10.0:
+                    issues.append(f"WARNING: {label} very sparse "
+                                  f"(median gap {median_gap:.1f}s) - "
+                                  f"may affect MKV interleaving")
+
+                # Check if stream spans much less than file duration
+                if duration > 0 and span < duration * 0.5 and codec_type in ("audio", "subtitle"):
+                    issues.append(f"WARNING: {label} covers only "
+                                  f"{span:.1f}s of {duration:.1f}s total")
+
+            if issues:
+                lines.append("")
+                lines.append(f"Found {len(issues)} issue(s):")
+                for issue in issues:
+                    lines.append(f"  {issue}")
+            else:
+                lines.append("")
+                lines.append("No interleaving issues detected.")
+
+            _update_task(sid, tid, status="done",
+                         result={"lines": lines, "issue_count": len(issues)})
+        except CancelledError:
+            _update_task(sid, tid, status="cancelled", error="Cancelled")
+        except Exception as e:
+            _update_task(sid, tid, status="error", error=str(e))
+        finally:
+            _ensure_task_finished(sid, tid)
+
+    threading.Thread(target=go, daemon=True).start()
+    return jsonify({"task_id": tid})
+
+
 if __name__ == "__main__":
     print("=" * 50)
     print("  Audio Sync & Merge -- Web Interface")
@@ -597,6 +701,7 @@ if __name__ == "__main__":
     print(f"  ffmpeg:   {paths.get('ffmpeg') or 'NOT FOUND'}")
     print(f"  ffprobe:  {paths.get('ffprobe') or 'NOT FOUND'}")
     print(f"  mkvmerge: {mkv_path or 'NOT FOUND'}")
+    print(f"  hwaccel:  {paths.get('hwaccel', 'none')}")
 
     missing = []
     if not paths.get("ffmpeg"):

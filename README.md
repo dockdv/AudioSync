@@ -16,6 +16,7 @@ Useful when you have two recordings of the same content (e.g., different camera 
 - Multi-audio track selection and metadata editing
 - Attachment stream selection (cover art, embedded images)
 - MKV muxing via mkvmerge with track ordering and default track selection
+- Visual fine-tuning of offset by matching hard cuts (scene changes) across video tracks
 - FFmpeg-based merge with loudness matching
 - Cross-platform: Windows, Linux, macOS, Docker
 
@@ -40,6 +41,8 @@ AudioSync uses a multi-stage pipeline to automatically determine the speed ratio
 6. **Quality Fallback** — If RANSAC produces few inliers (<15), high residuals, or poor V1 coverage, the cross-correlation speed/offset is used instead.
 
 7. **Content Break Detection** — A sliding-window cross-correlation scan across the full file detects content breaks (e.g., censored scenes, inserted/removed segments). Each detected segment gets its own offset, and the merge produces a piecewise-aligned output using FFmpeg's concat filter. Supports arbitrary numbers of segments with a minimum segment length of 60 seconds.
+
+8. **Visual Fine-Tune** — When both files have video, the offset is refined by detecting hard cuts (scene changes) in V1 using MSE on keyframe pairs, then matching each cut in V2 using perceptual hashing (pHash). The median of matched offsets replaces the audio-only estimate when it improves alignment.
 
 ### Vocal Filter (Cross-Language Mode)
 

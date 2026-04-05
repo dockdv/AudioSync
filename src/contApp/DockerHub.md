@@ -16,6 +16,7 @@ Useful when you have two recordings of the same content (e.g., different camera 
 - Multi-audio track selection and metadata editing
 - Attachment stream selection (cover art, embedded images)
 - MKV muxing via mkvmerge with track ordering and default track selection
+- Visual fine-tuning of offset by matching hard cuts (scene changes) across video tracks
 - FFmpeg-based merge with loudness matching
 
 ## How It Works
@@ -27,6 +28,7 @@ AudioSync uses a multi-stage alignment pipeline:
 3. **RANSAC Linear Fit** — Matched fingerprint pairs are fitted to `t1 = a * t2 + b` using RANSAC to find the speed ratio and offset.
 4. **Content Break Detection** — Sliding-window cross-correlation scan detects content breaks (censored scenes, different edits) and aligns each segment independently. Supports arbitrary numbers of segments.
 5. **Vocal Filter** — Optional in-memory band-reject filter (removes 300Hz-3kHz) for cross-language matching where dialogue differs but music/effects are shared.
+6. **Visual Fine-Tune** — When both files have video, the offset is refined by detecting hard cuts (scene changes) in V1 using MSE on keyframe pairs, then matching each cut in V2 using perceptual hashing (pHash). The median of matched offsets replaces the audio-only estimate when it improves alignment.
 
 ## Screenshots
 

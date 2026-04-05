@@ -37,6 +37,7 @@ function saveUIState() {
             atempo: document.getElementById('atempo-input').value,
             offset: document.getElementById('offset-input').value,
             vocal_filter: document.getElementById('vocal-filter-cb').checked,
+            measure_lufs: document.getElementById('measure-lufs-cb').checked,
             v1_sync_track: document.getElementById('v1-sync-track').value,
             v2_sync_track: document.getElementById('v2-sync-track').value,
             segments: state.segments,
@@ -221,6 +222,10 @@ function resetUI() {
     document.getElementById('segment-overrides').innerHTML = '';
     document.getElementById('merge-progress').querySelector('.fill').style.width = '0%';
     document.getElementById('log-box').value = '';
+    document.getElementById('gain-match-cb').disabled = true;
+    document.getElementById('gain-match-cb').checked = false;
+    document.getElementById('gain-match-label').title = 'Loudness must be measured first!';
+    document.getElementById('gain-match-label').style.opacity = '0.5';
     unlockButtons();
     updateMergeButton();
     updateSyncPanels();
@@ -287,6 +292,41 @@ async function loadVideo(n) {
     updateSyncPanels();
     await ensureSession();
     saveUIState();
+}
+
+async function testInterleave() {
+    const filepath = state.v1.path;
+    if (!filepath) { alert('Load Video 1 first.'); return; }
+    if (_runningTaskId) { alert('A task is running. Stop it first.'); return; }
+
+    await ensureSession();
+    log('[Test] Analysing interleave structure...');
+    lockButtons('test');
+
+    const result = await apiPost(`/api/session/${_sessionId}/test-interleave`, { filepath });
+    if (result.error) {
+        log(`[Test] Error: ${result.error}`);
+        unlockButtons();
+        return;
+    }
+
+    startPoll('test', result.task_id,
+        (task) => {
+            if (task.progress) log(`[Test] ${task.progress}`);
+        },
+        (task) => {
+            unlockButtons();
+            if (task.status === 'done' && task.result) {
+                for (const line of task.result.lines) {
+                    log(`[Test] ${line}`);
+                }
+            } else if (task.status === 'cancelled') {
+                log('[Test] Cancelled.');
+            } else {
+                log(`[Test] Error: ${task.error || 'Unknown error'}`);
+            }
+        }
+    );
 }
 
 async function clearVideo2() {
@@ -483,11 +523,13 @@ async function runAlign() {
     const t2 = parseInt(document.getElementById('v2-sync-track').value) || 0;
 
     const vocalFilter = document.getElementById('vocal-filter-cb').checked;
+    const measureLufs = document.getElementById('measure-lufs-cb').checked;
 
     const result = await apiPost(`/api/session/${_sessionId}/align`, {
         v1_path: state.v1.path, v2_path: state.v2.path,
         v1_track: t1, v2_track: t2,
         vocal_filter: vocalFilter,
+        measure_lufs: measureLufs,
         v1_streams: state.v1.streams,
         v2_streams: state.v2.streams,
         v1_tracks: state.v1.tracks,
@@ -542,6 +584,16 @@ function showAlignResults(r) {
     state.v2Lufs = r.v2_lufs ?? null;
     if (state.v1Lufs != null && state.v2Lufs != null) {
         log(`[Align] Loudness: V1=${state.v1Lufs.toFixed(1)} LUFS, V2=${state.v2Lufs.toFixed(1)} LUFS (delta=${(state.v1Lufs - state.v2Lufs).toFixed(1)} dB)`);
+        document.getElementById('gain-match-cb').disabled = false;
+        const gml = document.getElementById('gain-match-label');
+        gml.title = '';
+        gml.style.opacity = '';
+    } else {
+        document.getElementById('gain-match-cb').disabled = true;
+        document.getElementById('gain-match-cb').checked = false;
+        const gml = document.getElementById('gain-match-label');
+        gml.title = 'Loudness must be measured first!';
+        gml.style.opacity = '0.5';
     }
 
     document.getElementById('atempo-input').value = at.toFixed(6);
@@ -567,6 +619,10 @@ function showAlignResults(r) {
         const voSign = r.visual_offset >= 0 ? '+' : '';
         vizEl.textContent = `corrected: ${aoSign}${r.audio_offset.toFixed(3)}s \u2192 ${voSign}${r.visual_offset.toFixed(3)}s`;
         vizEl.style.color = 'var(--warn)';
+    } else if (r.visual_refined_offset != null) {
+        const vrSign = r.visual_refined_offset >= 0 ? '+' : '';
+        vizEl.textContent = `fine-tuned: ${vrSign}${r.visual_refined_offset.toFixed(3)}s`;
+        vizEl.style.color = 'var(--blue)';
     } else {
         vizEl.textContent = 'confirmed';
         vizEl.style.color = 'var(--green)';
@@ -589,6 +645,17 @@ function showAlignResults(r) {
         txt += `Visual check:     corrected \u2192 offset=${voSign}${r.visual_offset.toFixed(3)}s  speed=${(1.0/r.visual_speed).toFixed(6)}  ${scoreStr}\n`;
     } else {
         txt += `Visual check:     confirmed\n`;
+    }
+    if (r.visual_refined_offset != null) {
+        const vrSign = r.visual_refined_offset >= 0 ? '+' : '';
+        txt += `Visual fine-tune:  offset ${aoSign}${aoOff.toFixed(3)}s \u2192 ${vrSign}${r.visual_refined_offset.toFixed(3)}s\n`;
+    }
+    if (r.v1_fps > 0 && r.v2_fps > 0) {
+        const v1f = r.v1_fps > 0 ? r.v1_fps.toFixed(3) : '?';
+        const v2f = r.v2_fps > 0 ? r.v2_fps.toFixed(3) : '?';
+        txt += `Framerate:        V1=${v1f}  V2=${v2f}`;
+        if (r.fps_adjusted) txt += '  (atempo snapped to fps ratio)';
+        txt += '\n';
     }
     if (r.v2_start_delay > 0.01) {
         txt += `V2 start delay:   ${r.v2_start_delay.toFixed(3)}s\n`;
@@ -1348,11 +1415,18 @@ async function switchToSession(sid, sess) {
         if (radio) radio.checked = true;
     }
 
-    // Vocal filter & sync tracks
+    // Vocal filter, measure loudness & sync tracks
     if (ui.vocal_filter !== undefined)
         document.getElementById('vocal-filter-cb').checked = ui.vocal_filter;
-    if (ui.gain_match !== undefined)
-        document.getElementById('gain-match-cb').checked = ui.gain_match;
+    if (ui.measure_lufs !== undefined)
+        document.getElementById('measure-lufs-cb').checked = ui.measure_lufs;
+    if (ui.v1_lufs != null && ui.v2_lufs != null) {
+        document.getElementById('gain-match-cb').disabled = false;
+        document.getElementById('gain-match-label').title = '';
+        document.getElementById('gain-match-label').style.opacity = '';
+        if (ui.gain_match !== undefined)
+            document.getElementById('gain-match-cb').checked = ui.gain_match;
+    }
     if (ui.v1_lufs !== undefined) state.v1Lufs = ui.v1_lufs;
     if (ui.v2_lufs !== undefined) state.v2Lufs = ui.v2_lufs;
     if (ui.container_change !== undefined) state.containerChange = ui.container_change;

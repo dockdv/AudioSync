@@ -47,9 +47,48 @@ def _find_binary(name):
 _ffmpeg = _find_binary("ffmpeg")
 _ffprobe = _find_binary("ffprobe")
 
+_HWACCEL_PRIORITY = ["cuda", "vaapi", "videotoolbox", "qsv"]
+
+
+def _detect_hwaccel():
+    if not _ffmpeg:
+        return None
+    try:
+        raw = subprocess.run(
+            [_ffmpeg, "-hwaccels"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=10, creationflags=_creationflags if sys.platform == "win32" else 0,
+        ).stdout.decode("utf-8", errors="replace")
+        available = set()
+        capture = False
+        for line in raw.splitlines():
+            line = line.strip()
+            if line.startswith("Hardware acceleration methods:"):
+                capture = True
+                continue
+            if capture and line:
+                available.add(line)
+        for method in _HWACCEL_PRIORITY:
+            if method in available:
+                return method
+    except Exception:
+        pass
+    return None
+
+
+_hwaccel_method = _detect_hwaccel()
+_hwaccel_failed = False
+
+
+def _hwaccel_flags():
+    if _hwaccel_failed or not _hwaccel_method:
+        return []
+    return ["-hwaccel", _hwaccel_method]
+
 
 def get_paths():
-    return {"ffmpeg": _ffmpeg or "", "ffprobe": _ffprobe or ""}
+    return {"ffmpeg": _ffmpeg or "", "ffprobe": _ffprobe or "",
+            "hwaccel": _hwaccel_method or "none"}
 
 _creationflags = 0
 if sys.platform == "win32":
@@ -190,6 +229,20 @@ def _normalize_lang(code):
     return normalize_language(code)
 
 
+def _parse_frame_rate(s):
+    """Parse ffprobe frame rate string like '24000/1001' into a float."""
+    if not s or s == "0/0":
+        return 0.0
+    parts = s.split("/")
+    if len(parts) == 2:
+        num, den = float(parts[0]), float(parts[1])
+        return num / den if den > 0 else 0.0
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return 0.0
+
+
 def probe(handle):
     fp = _ffprobe
     raw = _run([fp, "-v", "quiet", "-print_format", "json",
@@ -238,6 +291,7 @@ def probe(handle):
         elif codec_type == "video":
             entry["width"] = int(s.get("width", 0))
             entry["height"] = int(s.get("height", 0))
+            entry["frame_rate"] = _parse_frame_rate(s.get("r_frame_rate", "0/1"))
         elif codec_type == "subtitle":
             entry["subtitle_codec"] = codec
 
@@ -363,7 +417,121 @@ FRAME_W, FRAME_H = 160, 120
 
 
 def extract_frame(handle, timestamp, width=FRAME_W, height=FRAME_H):
+    global _hwaccel_failed
     ff = _ffmpeg
+    hw = _hwaccel_flags()
+    if hw:
+        cmd = [ff, "-v", "quiet"] + hw + [
+            "-ss", f"{timestamp:.3f}",
+            "-i", handle,
+            "-vframes", "1",
+            "-s", f"{width}x{height}",
+            "-f", "rawvideo",
+            "-pix_fmt", "gray",
+            "pipe:1"]
+        try:
+            raw = _run(cmd, timeout=30)
+            if len(raw) == height * width:
+                return np.frombuffer(raw, dtype=np.uint8).reshape(height, width).astype(np.float32)
+        except Exception:
+            pass
+        _hwaccel_failed = True
+
+    cmd = [ff, "-v", "quiet",
+           "-ss", f"{timestamp:.3f}",
+           "-i", handle,
+           "-vframes", "1",
+           "-s", f"{width}x{height}",
+           "-f", "rawvideo",
+           "-pix_fmt", "gray",
+           "pipe:1"]
+    raw = _run(cmd, timeout=30)
+    if len(raw) != height * width:
+        return None
+    return np.frombuffer(raw, dtype=np.uint8).reshape(height, width).astype(np.float32)
+
+
+def get_keyframe_timestamps(handle, start=0.0, end=None):
+    """Get keyframe (I-frame) timestamps from the video stream.
+
+    Returns a sorted list of float PTS timestamps in seconds.
+    Uses packet flags (fast, no decoding) with -read_intervals.
+    """
+    fp = _ffprobe
+    cmd = [fp, "-v", "quiet",
+           "-select_streams", "v:0",
+           "-show_entries", "packet=pts_time,flags",
+           "-of", "csv=p=0"]
+    if start > 0 or end is not None:
+        end_str = f"%{end:.3f}" if end is not None else ""
+        cmd += ["-read_intervals", f"{start:.3f}{end_str}"]
+    cmd.append(handle)
+
+    raw = _run(cmd, timeout=600)
+    text = raw.decode("utf-8", errors="replace")
+
+    timestamps = []
+    for line in text.strip().split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(",")
+        if len(parts) < 2:
+            continue
+        flags = parts[1]
+        if "K" not in flags:
+            continue
+        try:
+            pts = float(parts[0])
+        except ValueError:
+            continue
+        timestamps.append(pts)
+
+    timestamps.sort()
+    return timestamps
+
+
+def get_video_resolution(handle):
+    """Get width, height of the first video stream."""
+    fp = _ffprobe
+    raw = _run([fp, "-v", "quiet", "-select_streams", "v:0",
+                "-show_entries", "stream=width,height",
+                "-of", "csv=p=0", handle], timeout=10)
+    text = raw.decode("utf-8", errors="replace").strip()
+    parts = text.split(",")
+    if len(parts) < 2:
+        return None, None
+    try:
+        return int(parts[0]), int(parts[1])
+    except (ValueError, IndexError):
+        return None, None
+
+
+def extract_frame_full(handle, timestamp, width, height):
+    """Extract a single frame at specified resolution as grayscale.
+
+    Returns numpy array of shape (H, W) with dtype float32, or None.
+    """
+    global _hwaccel_failed
+    ff = _ffmpeg
+    hw = _hwaccel_flags()
+    if hw:
+        cmd = [ff, "-v", "quiet"] + hw + [
+            "-ss", f"{timestamp:.3f}",
+            "-i", handle,
+            "-vframes", "1",
+            "-s", f"{width}x{height}",
+            "-f", "rawvideo",
+            "-pix_fmt", "gray",
+            "pipe:1"]
+        try:
+            raw = _run(cmd, timeout=30)
+            if len(raw) == height * width:
+                return np.frombuffer(raw, dtype=np.uint8).reshape(height, width).astype(np.float32)
+        except Exception:
+            pass
+        _hwaccel_failed = True
+
     cmd = [ff, "-v", "quiet",
            "-ss", f"{timestamp:.3f}",
            "-i", handle,
@@ -393,6 +561,67 @@ def version_info():
         except Exception:
             pass
     return result
+
+
+def probe_packets(handle, cancel=None, progress_cb=None):
+    """Read packet DTS positions per stream using ffprobe.
+
+    Returns dict keyed by stream_index, each value is a sorted list of
+    float DTS seconds.  Only streams that have at least one valid DTS
+    are included.
+    """
+    fp = _ffprobe
+    cmd = [fp, "-v", "quiet",
+           "-print_format", "csv=p=0",
+           "-show_entries", "packet=stream_index,dts_time",
+           handle]
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            creationflags=_creationflags)
+    packets = {}          # {stream_index: [dts_float, ...]}
+    line_count = 0
+    last_report = 0
+    buf = b""
+    try:
+        while True:
+            if cancel and cancel.is_cancelled:
+                proc.kill()
+                proc.wait()
+                raise CancelledError("Cancelled")
+            chunk = proc.stdout.read(131072)
+            if not chunk:
+                break
+            buf += chunk
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                parts = line.strip().split(b",")
+                if len(parts) < 2:
+                    continue
+                try:
+                    idx = int(parts[0])
+                    dts = float(parts[1])
+                except (ValueError, IndexError):
+                    continue
+                packets.setdefault(idx, []).append(dts)
+                line_count += 1
+            if progress_cb and line_count - last_report >= 50000:
+                progress_cb("progress", f"Reading packets... ({line_count:,} so far)")
+                last_report = line_count
+        proc.wait(timeout=120)
+    except CancelledError:
+        raise
+    except Exception:
+        proc.kill()
+        proc.wait(timeout=5)
+        raise
+
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffprobe failed (code {proc.returncode})")
+
+    for idx in packets:
+        packets[idx].sort()
+
+    return packets
 
 
 library_versions = {}

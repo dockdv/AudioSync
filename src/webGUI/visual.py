@@ -230,3 +230,161 @@ def refine_boundary_visual(v1_path, v2_path, segments, speed,
         refined[si + 1] = dict(refined[si + 1], v1_start=new_boundary)
 
     return refined
+
+
+def _is_hard_cut(path, kf_time, prev_time, w, h, mse_threshold=500):
+    """Check if a keyframe is a hard cut by comparing to previous frame.
+
+    Returns (is_cut, keyframe_frame, mse).
+    Uses MSE (mean squared error) for reliable cut detection.
+    """
+    frame_kf = fflib.extract_frame_full(path, kf_time, w, h)
+    frame_prev = fflib.extract_frame_full(path, prev_time, w, h)
+
+    if frame_kf is None or frame_prev is None:
+        return False, None, -1.0
+    mse = float(np.mean((frame_kf - frame_prev) ** 2))
+    return mse > mse_threshold, frame_kf, mse
+
+
+def _find_hard_cut_from(keyframes, idx, path, w, h, frame_interval,
+                        cancel=None):
+    """Walk keyframes starting at idx until a hard cut is found.
+
+    Returns (keyframe_time, keyframe_frame) or (None, None).
+    """
+    for i in range(idx, min(idx + 50, len(keyframes))):
+        if cancel and hasattr(cancel, 'check'):
+            cancel.check()
+        kf_time = keyframes[i]
+        prev_time = max(0.0, kf_time - frame_interval)
+        is_cut, frame_kf, sim = _is_hard_cut(path, kf_time, prev_time, w, h)
+        if is_cut:
+            return kf_time, frame_kf
+    return None, None
+
+
+def refine_offset_visual(v1_path, v2_path, offset, speed, dur1, dur2,
+                         cancel=None, progress_cb=None):
+    """Refine offset by matching keyframe-based hard cuts between V1/V2.
+
+    Returns the refined offset, or None if insufficient cuts matched.
+    """
+    margin = max(60.0, dur1 * 0.05)
+    usable = dur1 - 2 * margin
+    if usable < 30:
+        return None
+
+    if progress_cb:
+        progress_cb("status", "Visual fine-tune: finding V1 hard cuts...")
+
+    # Get V1 video resolution
+    v1_w, v1_h = fflib.get_video_resolution(v1_path)
+    if not v1_w or not v1_h:
+        return None
+
+    # Define 10 equally spaced locations
+    n_locations = 10
+    locations = [margin + usable * k / (n_locations + 1)
+                 for k in range(1, n_locations + 1)]
+
+    # Each location queries its own keyframe range
+    search_len = 60.0  # search up to 60s from each location
+
+    def _find_v1_cut(loc):
+        keyframes = fflib.get_keyframe_timestamps(
+            v1_path, loc, loc + search_len)
+        if not keyframes:
+            return None
+        frame_interval = 1.0 / 24.0
+        if len(keyframes) >= 2:
+            gaps = [keyframes[i+1] - keyframes[i]
+                    for i in range(min(20, len(keyframes) - 1))]
+            pos_gaps = [g for g in gaps if g > 0]
+            if pos_gaps:
+                frame_interval = min(frame_interval, min(pos_gaps))
+        return _find_hard_cut_from(keyframes, 0, v1_path,
+                                   v1_w, v1_h, frame_interval,
+                                   cancel=cancel)
+
+    # Get V2 resolution
+    v2_w, v2_h = fflib.get_video_resolution(v2_path)
+    if not v2_w or not v2_h:
+        return None
+
+    def _match_in_v2(v1_time, v1_frame):
+        expected_v2 = (v1_time - offset) / speed
+        t2_start = max(0.0, expected_v2 - 10.0)
+        t2_end = min(dur2, expected_v2 + 10.0)
+        v2_keyframes = fflib.get_keyframe_timestamps(v2_path, t2_start, t2_end)
+        if not v2_keyframes:
+            return None
+
+        v2_frame_interval = 1.0 / 24.0
+        if len(v2_keyframes) >= 2:
+            gaps = [v2_keyframes[i+1] - v2_keyframes[i]
+                    for i in range(len(v2_keyframes) - 1)]
+            if gaps:
+                v2_frame_interval = min(v2_frame_interval,
+                                        min(g for g in gaps if g > 0))
+
+        for kf_time in v2_keyframes:
+            if cancel and hasattr(cancel, 'check'):
+                cancel.check()
+            prev_time = max(0.0, kf_time - v2_frame_interval)
+            is_cut, v2_frame, sim = _is_hard_cut(
+                v2_path, kf_time, prev_time, v2_w, v2_h)
+            if not is_cut:
+                continue
+            match_sim = frame_similarity(v1_frame, v2_frame)
+            if match_sim > 0.8:
+                return v1_time - speed * kf_time
+        return None
+
+    # Interleaved: find V1 cut → match in V2 → next location
+    matched_offsets = []
+    consecutive = 0
+    for loc in locations:
+        if cancel and hasattr(cancel, 'check'):
+            cancel.check()
+        result = _find_v1_cut(loc)
+        if not result or result[0] is None:
+            consecutive = 0
+            continue
+        v1_time, v1_frame = result
+        if progress_cb:
+            progress_cb("status",
+                        f"Visual fine-tune: matching V1 cut at "
+                        f"{v1_time:.1f}s in V2...")
+        matched = _match_in_v2(v1_time, v1_frame)
+        if matched is not None:
+            matched_offsets.append(matched)
+            consecutive += 1
+            if consecutive >= 2:
+                break
+        else:
+            consecutive = 0
+
+    if len(matched_offsets) < 2:
+        if progress_cb:
+            progress_cb("status",
+                        f"Visual fine-tune: only {len(matched_offsets)} cuts "
+                        f"matched, keeping coarse offset")
+        return None
+
+    refined = float(np.median(matched_offsets))
+
+    # Refined offset must not exceed audio offset
+    if refined > offset:
+        if progress_cb:
+            progress_cb("status",
+                        f"Visual fine-tune: refined {refined:.3f}s > audio "
+                        f"{offset:.3f}s, discarding")
+        return None
+
+    if progress_cb:
+        progress_cb("status",
+                    f"Visual fine-tune: {len(matched_offsets)} cuts matched, "
+                    f"offset {offset:.3f}s -> {refined:.3f}s")
+
+    return refined

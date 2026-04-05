@@ -18,6 +18,7 @@ from audio import (
 )
 from visual import (
     verify_offset_visual, validate_segments_visual, refine_boundary_visual,
+    refine_offset_visual,
 )
 from ctx import SessionContext
 
@@ -107,10 +108,14 @@ def _decode_and_fingerprint(ctx):
     for m in (msgs2 or []):
         ctx.decode_warnings.append(f"V2: {m}")
 
-    if ctx.progress_cb:
-        ctx.progress_cb("status", "Measuring loudness (LUFS)...")
-    ctx.v1_lufs = fflib.measure_lufs(ctx.v1_path, ctx.align_track1, cancel=ctx.cancel)
-    ctx.v2_lufs = fflib.measure_lufs(ctx.v2_path, ctx.align_track2, cancel=ctx.cancel)
+    if ctx.measure_lufs:
+        if ctx.progress_cb:
+            ctx.progress_cb("status", "Measuring loudness (LUFS)...")
+        ctx.v1_lufs = fflib.measure_lufs(ctx.v1_path, ctx.align_track1, cancel=ctx.cancel)
+        ctx.v2_lufs = fflib.measure_lufs(ctx.v2_path, ctx.align_track2, cancel=ctx.cancel)
+    else:
+        ctx.v1_lufs = None
+        ctx.v2_lufs = None
 
     if ctx.progress_cb:
         ctx.progress_cb("status", "Mel FP: V1...")
@@ -415,10 +420,61 @@ def free_audio(ctx):
     ctx.audio2 = None
 
 
+def _get_video_fps(info):
+    """Extract frame rate of the first video stream from probe info."""
+    for s in (info or {}).get("streams", []):
+        if s.get("codec_type") == "video":
+            fps = s.get("frame_rate", 0)
+            if fps and fps > 0:
+                return float(fps)
+    return 0.0
+
+
 def build_align_result(ctx):
     atempo = _speed_to_atempo(ctx.align_a)
     vr = ctx.visual_result
     vc = ctx.visual_corrected
+
+    # Framerate-based atempo adjustment
+    v1_fps = _get_video_fps(ctx.v1_info)
+    v2_fps = _get_video_fps(ctx.v2_info)
+    fps_adjusted = False
+    if v1_fps > 0 and v2_fps > 0:
+        fps_ratio = v1_fps / v2_fps
+        if abs(atempo - fps_ratio) / fps_ratio < 0.002:
+            new_a = 1.0 / fps_ratio
+            if abs(new_a - ctx.align_a) > 1e-9:
+                pairs = ctx.align_pairs or []
+                # Recompute offset only if visual fine-tune didn't set it
+                if ctx.visual_refined_offset is not None:
+                    new_b = ctx.align_b
+                else:
+                    if len(pairs) >= 2:
+                        t1s = np.array([p[0] for p in pairs])
+                        t2s = np.array([p[1] for p in pairs])
+                        new_b = float(np.mean(t1s - new_a * t2s))
+                    else:
+                        new_b = ctx.align_b
+                # Recompute residuals
+                rmean, rmax, rend = residual_stats(pairs, new_a, new_b)
+                ctx.align_a = new_a
+                ctx.align_b = new_b
+                ctx.align_rmean = rmean
+                ctx.align_rmax = rmax
+                ctx.align_rend = rend
+                atempo = _speed_to_atempo(new_a)
+                # Update segment offsets
+                if ctx.segments:
+                    for seg in ctx.segments:
+                        seg_pairs = [p for p in pairs
+                                     if p[0] >= seg.get("v1_start", 0)
+                                     and p[0] < seg.get("v1_end", float("inf"))]
+                        if len(seg_pairs) >= 2:
+                            st1 = np.array([p[0] for p in seg_pairs])
+                            st2 = np.array([p[1] for p in seg_pairs])
+                            seg["offset"] = float(np.mean(st1 - new_a * st2))
+                fps_adjusted = True
+
     return {
         "speed_ratio": atempo, "offset": ctx.align_b,
         "linear_a": ctx.align_a, "linear_b": ctx.align_b,
@@ -443,6 +499,10 @@ def build_align_result(ctx):
         "v1_lufs": ctx.v1_lufs,
         "v2_lufs": ctx.v2_lufs,
         "v2_start_delay": ctx.v2_start_delay,
+        "v1_fps": v1_fps,
+        "v2_fps": v2_fps,
+        "fps_adjusted": fps_adjusted,
+        "visual_refined_offset": ctx.visual_refined_offset,
     }
 
 
@@ -460,6 +520,25 @@ def auto_align_audio(ctx):
         ctx.align_b = ctx.coarse_offset
         ctx.segments = [{"v1_start": 0.0, "v1_end": float("inf"),
                          "offset": ctx.coarse_offset, "n_inliers": 0}]
+
+    # Visual fine-tuning of offset using scene cuts (single-segment only)
+    if ctx.v1_has_video and ctx.v2_has_video and len(ctx.segments or []) <= 1:
+        refined_offset = refine_offset_visual(
+            ctx.v1_path, ctx.v2_path,
+            ctx.align_b, ctx.align_a,
+            ctx.align_dur1, ctx.align_dur2,
+            cancel=ctx.cancel, progress_cb=ctx.progress_cb)
+        if refined_offset is not None:
+            ctx.visual_refined_offset = refined_offset
+            ctx.align_b = refined_offset
+            # Update segment offsets
+            if ctx.segments:
+                delta = refined_offset - ctx.segments[0]["offset"]
+                for seg in ctx.segments:
+                    seg["offset"] += delta
+            # Recompute residuals
+            ctx.align_rmean, ctx.align_rmax, ctx.align_rend = \
+                residual_stats(ctx.align_pairs, ctx.align_a, ctx.align_b)
 
     v2_st = 0.0
     for t in ctx.v2_info.get("audio", []):

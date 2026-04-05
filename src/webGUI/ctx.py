@@ -19,6 +19,7 @@ class SessionContext:
     align_track1: int = 0
     align_track2: int = 0
     vocal_filter: bool = False
+    measure_lufs: bool = False
 
     # --- alignment internals (used by sync_engine, freed after align) ---
     align_dur1: float = 0
@@ -47,6 +48,7 @@ class SessionContext:
     ds_rate: float = 0.0
     visual_corrected: bool = False
     visual_result: object = None
+    visual_refined_offset: float = None
     v2_start_delay: float = 0.0
     align_mode: str = ""
     align_a: float = 1.0

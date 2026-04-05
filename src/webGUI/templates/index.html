@@ -28,6 +28,10 @@
             <span class="label" style="color:var(--dim)">mkvmerge</span>
             <span class="text-mono text-sm" style="flex:1;color:{{ 'var(--green)' if mkvmerge_path else 'var(--err)' }}">{{ mkvmerge_path or 'not found' }}{{ ' — ' + mkvmerge_version if mkvmerge_version else '' }}</span>
         </div>
+        <div class="file-row">
+            <span class="label" style="color:var(--dim)">hwaccel</span>
+            <span class="text-mono text-sm" style="flex:1;color:{{ 'var(--green)' if hwaccel != 'none' else 'var(--dim)' }}">{{ hwaccel }}</span>
+        </div>
     </div>
 
     <div class="file-inputs">
@@ -36,6 +40,7 @@
             <input type="text" id="v1-path-input" placeholder="Primary video (keeps video + all audio)...">
             <button onclick="browseServer(1)">Browse...</button>
             <button class="btn-accent btn-sm" onclick="loadVideo(1)">Load</button>
+            <button class="btn-sm" onclick="testInterleave()">Test</button>
         </div>
         <div class="file-info" id="v1-file-info"></div>
         <div class="file-row">
@@ -86,6 +91,9 @@
                 <div class="row mt-4" style="gap:12px;flex-wrap:wrap">
                     <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
                         <input type="checkbox" id="vocal-filter-cb" checked onchange="saveUIState()"> Filter vocals (cross-language)
+                    </label>
+                    <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
+                        <input type="checkbox" id="measure-lufs-cb" onchange="saveUIState()"> Measure loudness
                     </label>
                 </div>
                 <div class="row mt-4">
@@ -138,8 +146,8 @@
                     </label>
                 </div>
                 <div class="row" style="gap:12px;margin-bottom:6px">
-                    <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
-                        <input type="checkbox" id="gain-match-cb" onchange="saveUIState()"> Match V2 loudness to V1
+                    <label id="gain-match-label" style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer;opacity:0.5" title="Loudness must be measured first!">
+                        <input type="checkbox" id="gain-match-cb" disabled onchange="saveUIState()"> Match V2 loudness to V1
                     </label>
                 </div>
                 <div class="row" style="margin-bottom:4px">
