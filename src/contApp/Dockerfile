@@ -4,9 +4,10 @@ COPY src/webGUI/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        ffmpeg mkvtoolnix \
-        intel-media-va-driver && \
+    apt-get install -y --no-install-recommends ffmpeg mkvtoolnix && \
+    if [ "$(dpkg --print-architecture)" = "amd64" ]; then \
+        apt-get install -y --no-install-recommends intel-media-va-driver; \
+    fi && \
     rm -f /usr/bin/ffplay && \
     rm -rf /var/lib/apt/lists/*
 
