@@ -24,53 +24,66 @@ let _saveTimer = null;
 let _restoring = false;
 let _logCursor = 0;
 
+function _buildUIState() {
+    return {
+        v1_path: document.getElementById('v1-path-input').value,
+        v2_path: document.getElementById('v2-path-input').value,
+        out_path: document.getElementById('out-path-input').value,
+        selected: { v1: {...state.selected.v1}, v2: {...state.selected.v2} },
+        track_overrides: { ...state.trackOverrides },
+        default_audio_idx: state.defaultAudioIdx,
+        container_fmt: document.querySelector('input[name="container-fmt"]:checked').value,
+        atempo: document.getElementById('atempo-input').value,
+        offset: document.getElementById('offset-input').value,
+        atempo_edited: state.atempoEdited,
+        offset_edited: state.offsetEdited,
+        vocal_filter: document.getElementById('vocal-filter-cb').checked,
+        measure_lufs: document.getElementById('measure-lufs-cb').checked,
+        v1_sync_track: document.getElementById('v1-sync-track').value,
+        v2_sync_track: document.getElementById('v2-sync-track').value,
+        segments: state.segments,
+        gain_match: document.getElementById('gain-match-cb').checked,
+        v1_lufs: state.v1Lufs,
+        v2_lufs: state.v2Lufs,
+        container_change: state.containerChange,
+        container_ext: state.containerExt,
+        v1_state: state.v1,
+        v2_state: state.v2,
+    };
+}
+
+function _persistUIState(uiState) {
+    if (!_sessionId) return;
+    if (_sessionCache[_sessionId]) {
+        _sessionCache[_sessionId].ui_state = { ...uiState };
+    }
+    fetch(`/api/session/${_sessionId}/state`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(uiState),
+    }).then(r => r.json()).then(data => {
+        if (data.version !== undefined && _sessionCache[_sessionId]) {
+            _sessionCache[_sessionId].version = data.version;
+            if (data.label) {
+                _sessionCache[_sessionId].label = data.label;
+                renderSessionList(_sessionCache);
+            }
+        }
+    }).catch(() => {});
+}
+
 function saveUIState() {
     if (_restoring || !_sessionId) return;
     clearTimeout(_saveTimer);
     _saveTimer = setTimeout(() => {
-        if (!_sessionId) return;
-        const uiState = {
-            v1_path: document.getElementById('v1-path-input').value,
-            v2_path: document.getElementById('v2-path-input').value,
-            out_path: document.getElementById('out-path-input').value,
-            selected: { v1: {...state.selected.v1}, v2: {...state.selected.v2} },
-            track_overrides: { ...state.trackOverrides },
-            default_audio_idx: state.defaultAudioIdx,
-            container_fmt: document.querySelector('input[name="container-fmt"]:checked').value,
-            atempo: document.getElementById('atempo-input').value,
-            offset: document.getElementById('offset-input').value,
-            atempo_edited: state.atempoEdited,
-            offset_edited: state.offsetEdited,
-            vocal_filter: document.getElementById('vocal-filter-cb').checked,
-            measure_lufs: document.getElementById('measure-lufs-cb').checked,
-            v1_sync_track: document.getElementById('v1-sync-track').value,
-            v2_sync_track: document.getElementById('v2-sync-track').value,
-            segments: state.segments,
-            gain_match: document.getElementById('gain-match-cb').checked,
-            v1_lufs: state.v1Lufs,
-            v2_lufs: state.v2Lufs,
-            container_change: state.containerChange,
-            container_ext: state.containerExt,
-            v1_state: state.v1,
-            v2_state: state.v2,
-        };
-        if (_sessionCache[_sessionId]) {
-            _sessionCache[_sessionId].ui_state = { ...uiState };
-        }
-        fetch(`/api/session/${_sessionId}/state`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(uiState),
-        }).then(r => r.json()).then(data => {
-            if (data.version !== undefined && _sessionCache[_sessionId]) {
-                _sessionCache[_sessionId].version = data.version;
-                if (data.label) {
-                    _sessionCache[_sessionId].label = data.label;
-                    renderSessionList(_sessionCache);
-                }
-            }
-        }).catch(() => {});
+        _persistUIState(_buildUIState());
     }, 300);
+}
+
+function flushUIState() {
+    clearTimeout(_saveTimer);
+    if (_restoring || !_sessionId || !_sessionCache[_sessionId]) return;
+    _persistUIState(_buildUIState());
 }
 
 function _postLogs(lines) {
@@ -208,6 +221,7 @@ function startPoll(taskType, taskId, onUpdate, onDone, initialProgress, fetchLog
                 const task = await taskRes.json();
                 if (task.status === 'running') {
                     delay = 500;
+                    onUpdate(task);
                     schedulePoll();
                 } else {
                     if (doFetchLogs) await _fetchAndDisplayLogs();
@@ -1358,7 +1372,7 @@ async function closeSession() {
 }
 
 async function switchToSession(sid, sess) {
-    clearTimeout(_saveTimer);
+    flushUIState();
     stopPoll();
     _restoring = true;
     const myView = ++_viewId;
@@ -1388,7 +1402,8 @@ async function switchToSession(sid, sess) {
                 const c = _sessionCache[sid];
                 if (!c.log_entries) c.log_entries = [];
                 for (const entry of logData.entries) {
-                    const line = entry.ts ? `[${entry.ts}] ${entry.msg}` : entry.msg;
+                    const ts = entry.ts ? new Date(entry.ts * 1000).toLocaleTimeString() : null;
+                    const line = ts ? `[${ts}] ${entry.msg}` : entry.msg;
                     box.value += line + '\n';
                     c.log_entries.push(line);
                     _logCursor = entry.idx;

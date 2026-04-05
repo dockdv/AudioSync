@@ -198,6 +198,8 @@ def refine_offset_visual(v1_path, v2_path, offset, speed, dur1, dur2,
     if not v1_w or not v1_h:
         return None
     v1_hdr = fflib.is_hdr(v1_path)
+    if progress_cb:
+        progress_cb("status", f"Visual fine-tune: V1 HDR={v1_hdr}")
 
     # Define 10 equally spaced locations
     n_locations = 10
@@ -228,6 +230,8 @@ def refine_offset_visual(v1_path, v2_path, offset, speed, dur1, dur2,
     if not v2_w or not v2_h:
         return None
     v2_hdr = fflib.is_hdr(v2_path)
+    if progress_cb:
+        progress_cb("status", f"Visual fine-tune: V2 HDR={v2_hdr}")
 
     def _match_in_v2(v1_time, v1_frame):
         expected_v2 = (v1_time - offset) / speed
