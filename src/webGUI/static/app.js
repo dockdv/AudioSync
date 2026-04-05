@@ -51,6 +51,8 @@ function saveUIState() {
             v2_lufs: state.v2Lufs,
             container_change: state.containerChange,
             container_ext: state.containerExt,
+            v1_state: state.v1,
+            v2_state: state.v2,
         };
         if (_sessionCache[_sessionId]) {
             _sessionCache[_sessionId].ui_state = { ...uiState };
@@ -1421,16 +1423,29 @@ async function switchToSession(sid, sess) {
     const v1Path = ui.v1_path || _extractFromTasks(sess, 'v1_path');
     const v2Path = ui.v2_path || _extractFromTasks(sess, 'v2_path');
 
-    if (v1Path) {
+    if (v1Path && ui.v1_state && ui.v1_state.path === v1Path) {
+        state.v1 = ui.v1_state;
+        document.getElementById('v1-path-input').value = v1Path;
+        document.getElementById('v1-file-info').textContent = basename(v1Path);
+        fillStreamPanel(1);
+    } else if (v1Path) {
         document.getElementById('v1-path-input').value = v1Path;
         await loadVideo(1);
         if (_viewId !== myView) { _restoring = false; return; }
     }
-    if (v2Path) {
+    if (v2Path && ui.v2_state && ui.v2_state.path === v2Path) {
+        state.v2 = ui.v2_state;
+        document.getElementById('v2-path-input').value = v2Path;
+        document.getElementById('v2-file-info').textContent = basename(v2Path);
+        fillStreamPanel(2);
+    } else if (v2Path) {
         document.getElementById('v2-path-input').value = v2Path;
         await loadVideo(2);
         if (_viewId !== myView) { _restoring = false; return; }
     }
+    updateSyncCombos();
+    updateMergeButton();
+    updateSyncPanels();
 
     /* --- Restore all UI state --- */
 
