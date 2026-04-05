@@ -69,8 +69,20 @@ def _detect_hwaccel():
             if capture and line:
                 available.add(line)
         for method in _HWACCEL_PRIORITY:
-            if method in available:
-                return method
+            if method not in available:
+                continue
+            try:
+                result = subprocess.run(
+                    [_ffmpeg, "-v", "quiet", "-hwaccel", method,
+                     "-f", "lavfi", "-i", "nullsrc=s=64x64:d=0.1",
+                     "-vframes", "1", "-f", "null", "-"],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    timeout=10,
+                    creationflags=_creationflags if sys.platform == "win32" else 0)
+                if result.returncode == 0:
+                    return method
+            except Exception:
+                continue
     except Exception:
         pass
     return None

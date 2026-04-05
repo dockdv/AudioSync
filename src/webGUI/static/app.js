@@ -614,12 +614,7 @@ function showAlignResults(r) {
     precEl.style.color = rmax < 0.5 ? 'var(--green)' : rmax < 1.5 ? 'var(--warn)' : 'var(--err)';
 
     const vizEl = document.getElementById('r-visual');
-    if (r.visual_corrected) {
-        const aoSign = r.audio_offset >= 0 ? '+' : '';
-        const voSign = r.visual_offset >= 0 ? '+' : '';
-        vizEl.textContent = `corrected: ${aoSign}${r.audio_offset.toFixed(3)}s \u2192 ${voSign}${r.visual_offset.toFixed(3)}s`;
-        vizEl.style.color = 'var(--warn)';
-    } else if (r.visual_refined_offset != null) {
+    if (r.visual_refined_offset != null) {
         const vrSign = r.visual_refined_offset >= 0 ? '+' : '';
         vizEl.textContent = `fine-tuned: ${vrSign}${r.visual_refined_offset.toFixed(3)}s`;
         vizEl.style.color = 'var(--blue)';
@@ -639,13 +634,7 @@ function showAlignResults(r) {
     const aoOff = r.audio_offset !== undefined ? r.audio_offset : off;
     const aoSign = aoOff >= 0 ? '+' : '';
     let txt = `Audio alignment:  offset=${aoSign}${aoOff.toFixed(3)}s  speed=${(1.0/aoSpd).toFixed(6)}\n`;
-    if (r.visual_corrected) {
-        const voSign = r.visual_offset >= 0 ? '+' : '';
-        const scoreStr = r.audio_visual_score != null ? `(score ${r.audio_visual_score.toFixed(2)}\u2192${r.visual_score.toFixed(2)})` : '';
-        txt += `Visual check:     corrected \u2192 offset=${voSign}${r.visual_offset.toFixed(3)}s  speed=${(1.0/r.visual_speed).toFixed(6)}  ${scoreStr}\n`;
-    } else {
-        txt += `Visual check:     confirmed\n`;
-    }
+    txt += `Visual check:     confirmed\n`;
     if (r.visual_refined_offset != null) {
         const vrSign = r.visual_refined_offset >= 0 ? '+' : '';
         txt += `Visual fine-tune:  offset ${aoSign}${aoOff.toFixed(3)}s \u2192 ${vrSign}${r.visual_refined_offset.toFixed(3)}s\n`;

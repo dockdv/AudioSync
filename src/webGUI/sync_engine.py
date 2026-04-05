@@ -17,7 +17,7 @@ from audio import (
     detect_segments, snap_speed_to_candidate, compute_lufs,
 )
 from visual import (
-    verify_offset_visual, validate_segments_visual, refine_boundary_visual,
+    validate_segments_visual, refine_boundary_visual,
     refine_offset_visual,
 )
 from ctx import SessionContext
@@ -191,17 +191,7 @@ def _compute_coarse_alignment(ctx):
     if ctx.cancel:
         ctx.cancel.check()
 
-    if ctx.v1_has_video and ctx.v2_has_video:
-        ctx.visual_result = verify_offset_visual(
-            ctx.v1_path, ctx.v2_path, ctx.coarse_offset,
-            ctx.xcorr_speed, ctx.alt_offsets,
-            ctx.align_dur1, ctx.align_dur2,
-            progress_cb=ctx.progress_cb, cancel=ctx.cancel)
-        if ctx.visual_result is not None:
-            ctx.coarse_offset = ctx.visual_result["offset"]
-            ctx.xcorr_speed = ctx.visual_result["speed"]
-            ctx.alt_offsets = []
-            ctx.visual_corrected = True
+    pass
 
 
 def _align_ransac(ctx):
@@ -364,13 +354,8 @@ def _align_ransac(ctx):
                         segments[si]["offset"] = (seg["v1_start"] + off_s
                                                   - v2_abs * spd_s)
 
-    if ctx.visual_corrected or (segments and len(segments) > 1):
-        a = ctx.xcorr_speed
-        if ctx.visual_corrected and len(segments) == 1:
-            b = ctx.coarse_offset
-            segments[0]["offset"] = b
-        else:
-            b = segments[0]["offset"]
+    if segments and len(segments) > 1:
+        b = segments[0]["offset"]
     elif segments:
         inlier_t1s = np.array([p[0] for p in pairs]) if pairs else np.array([])
         inlier_t2s = np.array([p[1] for p in pairs]) if pairs else np.array([])
@@ -432,8 +417,7 @@ def _get_video_fps(info):
 
 def build_align_result(ctx):
     atempo = _speed_to_atempo(ctx.align_a)
-    vr = ctx.visual_result
-    vc = ctx.visual_corrected
+    pass
 
     # Framerate-based atempo adjustment
     v1_fps = _get_video_fps(ctx.v1_info)
@@ -491,11 +475,7 @@ def build_align_result(ctx):
         "warnings": ctx.decode_warnings,
         "audio_offset": ctx.audio_offset,
         "audio_speed": ctx.audio_speed,
-        "visual_corrected": vc,
-        "visual_offset": vr["offset"] if vc and vr else None,
-        "visual_speed": vr["speed"] if vc and vr else None,
-        "visual_score": vr["score"] if vc and vr else None,
-        "audio_visual_score": vr.get("audio_score") if vc and vr else None,
+        "visual_corrected": False,
         "v1_lufs": ctx.v1_lufs,
         "v2_lufs": ctx.v2_lufs,
         "v2_start_delay": ctx.v2_start_delay,
@@ -545,7 +525,7 @@ def auto_align_audio(ctx):
         if t.get("index") == ctx.align_track2:
             v2_st = t.get("start_time", 0.0)
             break
-    if v2_st > 0.01 and not ctx.visual_corrected:
+    if v2_st > 0.01:
         ctx.align_b -= v2_st
         ctx.coarse_offset -= v2_st
         for seg in (ctx.segments or []):
