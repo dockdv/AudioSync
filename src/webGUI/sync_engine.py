@@ -14,7 +14,7 @@ from audio import (
     match_fingerprints,
     mutual_nearest_neighbors, downsample_audio, filter_matches_by_offset,
     ransac_linear_fit, residual_stats, xcorr_on_downsampled,
-    detect_segments, snap_speed_to_candidate, compute_lufs,
+    detect_segments, snap_speed_to_candidate,
 )
 from visual import (
     validate_segments_visual, refine_boundary_visual,
@@ -180,18 +180,12 @@ def _compute_coarse_alignment(ctx):
             v2_st = t.get("start_time", 0.0)
             break
     ctx.v2_start_delay = v2_st
-    if v2_st > 0.01:
-        ctx.coarse_offset -= v2_st
-        ctx.alt_offsets = [(off - v2_st, spd, corr)
-                           for off, spd, corr in ctx.alt_offsets]
 
     ctx.audio_offset = ctx.coarse_offset
     ctx.audio_speed = ctx.xcorr_speed
 
     if ctx.cancel:
         ctx.cancel.check()
-
-    pass
 
 
 def _align_ransac(ctx):
@@ -417,7 +411,6 @@ def _get_video_fps(info):
 
 def build_align_result(ctx):
     atempo = _speed_to_atempo(ctx.align_a)
-    pass
 
     # Framerate-based atempo adjustment
     v1_fps = _get_video_fps(ctx.v1_info)
@@ -475,7 +468,6 @@ def build_align_result(ctx):
         "warnings": ctx.decode_warnings,
         "audio_offset": ctx.audio_offset,
         "audio_speed": ctx.audio_speed,
-        "visual_corrected": False,
         "v1_lufs": ctx.v1_lufs,
         "v2_lufs": ctx.v2_lufs,
         "v2_start_delay": ctx.v2_start_delay,
@@ -528,6 +520,9 @@ def auto_align_audio(ctx):
     if v2_st > 0.01:
         ctx.align_b -= v2_st
         ctx.coarse_offset -= v2_st
+        ctx.audio_offset -= v2_st
+        ctx.alt_offsets = [(off - v2_st, spd, corr)
+                           for off, spd, corr in ctx.alt_offsets]
         for seg in (ctx.segments or []):
             seg["offset"] -= v2_st
 

@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 import fflib
-from fflib import CancelledError
+
 from probe import get_duration, get_audio_sample_rate
 
 import mkvmerge as _mkvmerge_mod

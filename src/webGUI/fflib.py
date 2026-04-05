@@ -47,6 +47,10 @@ def _find_binary(name):
 _ffmpeg = _find_binary("ffmpeg")
 _ffprobe = _find_binary("ffprobe")
 
+_creationflags = 0
+if sys.platform == "win32":
+    _creationflags = subprocess.CREATE_NO_WINDOW
+
 _HWACCEL_PRIORITY = ["cuda", "vaapi", "videotoolbox", "qsv"]
 
 
@@ -57,6 +61,20 @@ def _detect_hwaccel():
                           "assets", "hwtest.mp4")
     if not os.path.isfile(hwtest):
         return None
+
+    _probes = {
+        "cuda": ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda",
+                 "-i", hwtest, "-vframes", "1", "-f", "null", "-"],
+        "vaapi": ["-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi",
+                  "-vaapi_device", "/dev/dri/renderD128",
+                  "-i", hwtest, "-vframes", "1", "-f", "null", "-"],
+        "videotoolbox": ["-hwaccel", "videotoolbox",
+                         "-hwaccel_output_format", "videotoolbox_vld",
+                         "-i", hwtest, "-vframes", "1", "-f", "null", "-"],
+        "qsv": ["-hwaccel", "qsv", "-hwaccel_output_format", "qsv",
+                "-i", hwtest, "-vframes", "1", "-f", "null", "-"],
+    }
+
     try:
         raw = subprocess.run(
             [_ffmpeg, "-hwaccels"],
@@ -75,12 +93,14 @@ def _detect_hwaccel():
         for method in _HWACCEL_PRIORITY:
             if method not in available:
                 continue
+            probe = _probes.get(method)
+            if not probe:
+                continue
             try:
                 result = subprocess.run(
-                    [_ffmpeg, "-v", "error", "-hwaccel", method,
-                     "-i", hwtest, "-vframes", "1", "-f", "null", "-"],
+                    [_ffmpeg, "-v", "error"] + probe,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    timeout=3,
+                    timeout=5,
                     creationflags=_creationflags if sys.platform == "win32" else 0)
                 if result.returncode == 0:
                     return method
@@ -98,17 +118,15 @@ _hwaccel_failed = False
 def _hwaccel_flags():
     if _hwaccel_failed or not _hwaccel_method:
         return []
-    return ["-hwaccel", _hwaccel_method]
+    flags = ["-hwaccel", _hwaccel_method]
+    if _hwaccel_method == "vaapi":
+        flags += ["-vaapi_device", "/dev/dri/renderD128"]
+    return flags
 
 
 def get_paths():
     return {"ffmpeg": _ffmpeg or "", "ffprobe": _ffprobe or "",
             "hwaccel": _hwaccel_method or "none"}
-
-_creationflags = 0
-if sys.platform == "win32":
-    _creationflags = subprocess.CREATE_NO_WINDOW
-
 
 class CancelledError(Exception):
     pass

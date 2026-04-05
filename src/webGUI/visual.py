@@ -3,7 +3,6 @@
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import fflib
-from audio import SPEED_CANDIDATES
 
 
 def _dct2(block):
@@ -52,91 +51,6 @@ def _compare_at(v1_path, v2_path, t1, t2):
         f1_fut = pool.submit(_extract_frame_safe, v1_path, t1)
         f2_fut = pool.submit(_extract_frame_safe, v2_path, t2)
         return frame_similarity(f1_fut.result(), f2_fut.result())
-
-
-def visual_offset_score(v1_path, v2_path, offset, speed, dur1, dur2,
-                        n_probes=6, cancel=None):
-    margin = min(30.0, dur1 * 0.05)
-    probes = [margin + (dur1 - 2 * margin) * k / (n_probes + 1)
-              for k in range(1, n_probes + 1)]
-
-    sims = []
-    for t1 in probes:
-        if cancel and hasattr(cancel, 'check'):
-            cancel.check()
-        t2 = (t1 - offset) / speed
-        if t2 < 0 or t2 > dur2:
-            continue
-        sim = _compare_at(v1_path, v2_path, t1, t2)
-        if sim >= 0:
-            sims.append(sim)
-
-    if not sims:
-        return -1.0
-    return float(np.median(sims))
-
-
-def verify_offset_visual(v1_path, v2_path, coarse_offset, xcorr_speed,
-                         alt_offsets, dur1, dur2,
-                         progress_cb=None, cancel=None):
-    if progress_cb:
-        progress_cb("status", "Verifying alignment visually...")
-
-    xcorr_score = visual_offset_score(
-        v1_path, v2_path, coarse_offset, xcorr_speed, dur1, dur2,
-        cancel=cancel)
-
-    if xcorr_score > 0.7:
-        return None
-
-    candidates = [(coarse_offset, xcorr_speed, xcorr_score)]
-
-    pending = []
-    if abs(coarse_offset) > 0.5:
-        pending.append((0.0, xcorr_speed))
-    if alt_offsets:
-        for alt_off, alt_spd, alt_corr in alt_offsets[:3]:
-            pending.append((alt_off, alt_spd))
-    if abs(xcorr_speed - 1.0) > 0.001:
-        pending.append((0.0, 1.0))
-    for sc in SPEED_CANDIDATES:
-        if abs(sc - xcorr_speed) > 0.001:
-            pending.append((0.0, sc))
-
-    seen = {(round(coarse_offset, 2), round(xcorr_speed, 4))}
-    unique_pending = []
-    for off, spd in pending:
-        key = (round(off, 2), round(spd, 4))
-        if key not in seen:
-            seen.add(key)
-            unique_pending.append((off, spd))
-        if len(unique_pending) >= 5:
-            break
-
-    for off, spd in unique_pending:
-        if cancel and hasattr(cancel, 'check'):
-            cancel.check()
-        score = visual_offset_score(
-            v1_path, v2_path, off, spd, dur1, dur2, cancel=cancel)
-        candidates.append((off, spd, score))
-
-    candidates.sort(key=lambda x: x[2], reverse=True)
-    best_off, best_spd, best_score = candidates[0]
-
-    if (best_off, best_spd) == (coarse_offset, xcorr_speed):
-        return None
-
-    margin = best_score - xcorr_score
-    if best_score > 0.4 and (xcorr_score < 0.2 or margin > 0.15):
-        if progress_cb:
-            progress_cb("status",
-                        f"Visual correction: offset {coarse_offset:.2f} -> "
-                        f"{best_off:.2f}, speed {xcorr_speed:.4f} -> "
-                        f"{best_spd:.4f} (score {xcorr_score:.2f} -> "
-                        f"{best_score:.2f})")
-        return {"offset": best_off, "speed": best_spd, "score": best_score, "audio_score": xcorr_score}
-
-    return None
 
 
 def validate_segments_visual(v1_path, v2_path, segments, primary_offset,

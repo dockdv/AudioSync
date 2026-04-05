@@ -33,43 +33,6 @@ SPEED_SNAP_TOLERANCE = 0.005
 AUDIO_N_MELS = 128
 
 
-def compute_lufs(samples, sr):
-    """Compute integrated LUFS (EBU R128) from mono float32 samples."""
-    if len(samples) == 0:
-        return None
-    filtered = samples.astype(np.float64)
-    # Simple DC removal / high-pass via first-order difference filter
-    if len(filtered) > 1:
-        filtered = np.diff(filtered, prepend=filtered[0])
-    # 400ms gating blocks with 75% overlap (100ms hop)
-    block_len = int(sr * 0.4)
-    hop = int(sr * 0.1)
-    if block_len < 1:
-        return None
-    n_blocks = max(0, (len(filtered) - block_len) // hop + 1)
-    if n_blocks == 0:
-        return None
-    # Mean square per block
-    ms = np.empty(n_blocks, dtype=np.float64)
-    for i in range(n_blocks):
-        start = i * hop
-        block = filtered[start:start + block_len]
-        ms[i] = np.mean(block ** 2)
-    # Absolute gate: -70 LUFS
-    abs_gate = 10 ** ((-70 + 0.691) / 10)
-    above = ms[ms > abs_gate]
-    if len(above) == 0:
-        return None
-    # Relative gate: -10 LU below ungated mean
-    ungated_mean = np.mean(above)
-    rel_gate = ungated_mean * 10 ** (-10 / 10)
-    final = above[above > rel_gate]
-    if len(final) == 0:
-        return None
-    lufs = -0.691 + 10 * np.log10(np.mean(final))
-    return float(lufs)
-
-
 def decode_full_audio(filepath, track_index, sr, cancel=None,
                       vocal_filter=False, duration=0, progress_cb=None):
     audio, warnings = fflib.decode_audio(filepath, track_index, sr,

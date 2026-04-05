@@ -58,17 +58,6 @@ def get_path():
     return {"mkvmerge": _mkvmerge or ""}
 
 
-def identify(filepath, mkvmerge_path=None):
-    mkvm = mkvmerge_path or _mkvmerge
-    cmd = [mkvm, "--identify", "--identification-format", "json", filepath]
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                          creationflags=_creationflags)
-    if proc.returncode != 0:
-        err = proc.stderr.decode("utf-8", errors="replace").strip()
-        raise RuntimeError(f"mkvmerge --identify failed: {err}")
-    return json.loads(proc.stdout)
-
-
 def _run_mkvmerge(cmd, progress_cb=None, cancel=None, progress_prefix="mux"):
     stdout_lines = []
     stderr_buf = []

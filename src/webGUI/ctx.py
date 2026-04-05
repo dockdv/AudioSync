@@ -46,8 +46,6 @@ class SessionContext:
     ds1_seg: object = None
     ds2_seg: object = None
     ds_rate: float = 0.0
-    visual_corrected: bool = False
-    visual_result: object = None
     visual_refined_offset: float = None
     v2_start_delay: float = 0.0
     align_mode: str = ""

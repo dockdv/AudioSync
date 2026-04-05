@@ -42,32 +42,6 @@ ALL_LANGUAGES = [("und", "Undetermined")] + sorted(
 )
 
 
-def check_av():
-    result = {}
-    try:
-        ver = fflib.__version__
-        libs = fflib.library_versions
-        ffmpeg_ver = libs.get("ffmpeg", "")
-        result["fflib"] = (True,
-                           f"fflib {ver}" + (f", {ffmpeg_ver}" if ffmpeg_ver else ""),
-                           "")
-    except Exception as e:
-        result["fflib"] = (False, str(e), "")
-
-    try:
-        import mkvmerge as _mkvm
-        mkv_path = _mkvm.get_path().get("mkvmerge", "")
-        if mkv_path:
-            mkv_ver = _mkvm.version_info().get("mkvmerge", "")
-            result["mkvmerge"] = (True, mkv_ver or "found", mkv_path)
-        else:
-            result["mkvmerge"] = (False, "not found", "")
-    except Exception:
-        result["mkvmerge"] = (False, "not available", "")
-
-    return result
-
-
 MULTI_AUDIO_CONTAINERS = {
     ".mkv", ".mka", ".mp4", ".m4v", ".mov",
     ".ts", ".mts", ".m2ts", ".webm",
