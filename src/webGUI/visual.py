@@ -374,12 +374,12 @@ def refine_offset_visual(v1_path, v2_path, offset, speed, dur1, dur2,
 
     refined = float(np.median(matched_offsets))
 
-    # Refined offset must not exceed audio offset
-    if refined > offset:
+    # Refined offset must be closer to zero than audio offset
+    if abs(refined) > abs(offset):
         if progress_cb:
             progress_cb("status",
-                        f"Visual fine-tune: refined {refined:.3f}s > audio "
-                        f"{offset:.3f}s, discarding")
+                        f"Visual fine-tune: |{refined:.3f}s| > |{offset:.3f}s|, "
+                        f"discarding")
         return None
 
     if progress_cb:
