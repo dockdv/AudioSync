@@ -7,6 +7,15 @@
 __pycache__
 *.pyc
 
+# Windows binaries
+*.exe
+*.bat
+*.cmd
+
+# Bundled FFmpeg/FFprobe (container installs via apt)
+src/webGUI/ffmpeg
+src/webGUI/ffprobe
+
 # Virtual environment
 .venv/
 

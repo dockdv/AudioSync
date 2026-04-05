@@ -53,6 +53,10 @@ _HWACCEL_PRIORITY = ["cuda", "vaapi", "videotoolbox", "qsv"]
 def _detect_hwaccel():
     if not _ffmpeg:
         return None
+    hwtest = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "assets", "hwtest.mp4")
+    if not os.path.isfile(hwtest):
+        return None
     try:
         raw = subprocess.run(
             [_ffmpeg, "-hwaccels"],
@@ -73,11 +77,10 @@ def _detect_hwaccel():
                 continue
             try:
                 result = subprocess.run(
-                    [_ffmpeg, "-v", "quiet", "-hwaccel", method,
-                     "-f", "lavfi", "-i", "nullsrc=s=64x64:d=0.1",
-                     "-vframes", "1", "-f", "null", "-"],
+                    [_ffmpeg, "-v", "error", "-hwaccel", method,
+                     "-i", hwtest, "-vframes", "1", "-f", "null", "-"],
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    timeout=10,
+                    timeout=3,
                     creationflags=_creationflags if sys.platform == "win32" else 0)
                 if result.returncode == 0:
                     return method
