@@ -338,7 +338,7 @@ def refine_offset_visual(v1_path, v2_path, offset, speed, dur1, dur2,
                 continue
             match_sim = frame_similarity(v1_frame, v2_frame)
             if match_sim > 0.8:
-                return v1_time - speed * kf_time
+                return v1_time - kf_time
         return None
 
     # Interleaved: find V1 cut → match in V2 → next location
