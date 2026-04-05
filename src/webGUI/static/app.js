@@ -10,6 +10,8 @@ const state = {
     containerExt: '',
     v1Lufs: null,
     v2Lufs: null,
+    offsetEdited: false,
+    atempoEdited: false,
 };
 
 let _sessionId = null;
@@ -20,6 +22,7 @@ let _pollInterval = null;
 let _sessionCache = {};
 let _saveTimer = null;
 let _restoring = false;
+let _logCursor = 0;
 
 function saveUIState() {
     if (_restoring || !_sessionId) return;
@@ -36,6 +39,8 @@ function saveUIState() {
             container_fmt: document.querySelector('input[name="container-fmt"]:checked').value,
             atempo: document.getElementById('atempo-input').value,
             offset: document.getElementById('offset-input').value,
+            atempo_edited: state.atempoEdited,
+            offset_edited: state.offsetEdited,
             vocal_filter: document.getElementById('vocal-filter-cb').checked,
             measure_lufs: document.getElementById('measure-lufs-cb').checked,
             v1_sync_track: document.getElementById('v1-sync-track').value,
@@ -46,9 +51,6 @@ function saveUIState() {
             v2_lufs: state.v2Lufs,
             container_change: state.containerChange,
             container_ext: state.containerExt,
-            log_entries: (_sessionCache[_sessionId] && _sessionCache[_sessionId].log_entries)
-                ? _sessionCache[_sessionId].log_entries.slice(-200)
-                : [],
         };
         if (_sessionCache[_sessionId]) {
             _sessionCache[_sessionId].ui_state = { ...uiState };
@@ -69,6 +71,23 @@ function saveUIState() {
     }, 300);
 }
 
+function _postLogs(lines) {
+    if (_sessionId) {
+        fetch(`/api/session/${_sessionId}/logs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messages: lines }),
+        }).then(r => r.ok ? r.json() : null)
+          .then(data => {
+              if (data && data.log_idx) {
+                  _logCursor = Math.max(_logCursor, data.log_idx);
+                  const cache = _sessionCache[_sessionId];
+                  if (cache) cache.log_cursor = _logCursor;
+              }
+          }).catch(() => {});
+    }
+}
+
 function log(msg) {
     const box = document.getElementById('log-box');
     const ts = new Date().toLocaleTimeString();
@@ -80,6 +99,7 @@ function log(msg) {
         const entries = _sessionCache[_sessionId].log_entries;
         entries.push(line);
         if (entries.length > 500) entries.splice(0, entries.length - 500);
+        _postLogs([line]);
     }
 }
 
@@ -93,6 +113,7 @@ function logSeparator(label) {
         const entries = _sessionCache[_sessionId].log_entries;
         entries.push('', line);
         if (entries.length > 500) entries.splice(0, entries.length - 500);
+        _postLogs(['', line]);
     }
 }
 
@@ -142,32 +163,50 @@ function unlockButtons() {
     document.getElementById('merge-stop').classList.add('hidden');
 }
 
-function startPoll(taskType, taskId, onUpdate, onDone, initialProgress) {
+function _fetchAndDisplayLogs() {
+    if (!_sessionId) return Promise.resolve();
+    return fetch(`/api/session/${_sessionId}/logs?after=${_logCursor}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+            if (!data || !data.entries.length) return;
+            const box = document.getElementById('log-box');
+            const cache = _sessionCache[_sessionId];
+            if (cache && !cache.log_entries) cache.log_entries = [];
+            for (const entry of data.entries) {
+                if (entry.source === 'server') {
+                    box.value += entry.msg + '\n';
+                    if (cache) cache.log_entries.push(entry.msg);
+                }
+                _logCursor = entry.idx;
+            }
+            box.scrollTop = box.scrollHeight;
+            if (cache) cache.log_cursor = _logCursor;
+        }).catch(() => {});
+}
+
+function startPoll(taskType, taskId, onUpdate, onDone, initialProgress, fetchLogs) {
     stopPoll();
     _runningTaskId = taskId;
     _runningTaskType = taskType;
-    let lastProgress = initialProgress || '';
+    const doFetchLogs = fetchLogs !== false;
     let delay = 500;
     function schedulePoll() {
         _pollInterval = setTimeout(async () => {
             try {
-                const res = await fetch(`/api/session/${_sessionId}/task/${taskId}`);
-                if (!res.ok) {
+                const promises = [fetch(`/api/session/${_sessionId}/task/${taskId}`)];
+                if (doFetchLogs) promises.push(_fetchAndDisplayLogs());
+                const [taskRes] = await Promise.all(promises);
+                if (!taskRes.ok) {
                     stopPoll();
                     onDone({ status: 'error', error: 'Task not found' });
                     return;
                 }
-                const task = await res.json();
+                const task = await taskRes.json();
                 if (task.status === 'running') {
-                    if (task.progress !== lastProgress) {
-                        lastProgress = task.progress || '';
-                        onUpdate(task);
-                        delay = 500;
-                    } else {
-                        delay = Math.min(delay * 1.5, 3000);
-                    }
+                    delay = 500;
                     schedulePoll();
                 } else {
+                    if (doFetchLogs) await _fetchAndDisplayLogs();
                     stopPoll();
                     onDone(task);
                 }
@@ -213,6 +252,8 @@ function resetUI() {
     document.querySelector('input[name="container-fmt"][value="mkv"]').checked = true;
     document.getElementById('atempo-input').value = '1.000000';
     document.getElementById('offset-input').value = '0.000';
+    state.offsetEdited = false;
+    state.atempoEdited = false;
     for (const k of ['r-mode','r-atempo','r-offset','r-inliers','r-fit','r-precision','r-visual']) {
         const el = document.getElementById(k);
         el.textContent = '-';
@@ -311,9 +352,7 @@ async function testInterleave() {
     }
 
     startPoll('test', result.task_id,
-        (task) => {
-            if (task.progress) log(`[Test] ${task.progress}`);
-        },
+        (task) => {},
         (task) => {
             unlockButtons();
             if (task.status === 'done' && task.result) {
@@ -347,6 +386,8 @@ async function clearVideo2() {
     document.getElementById('v2-sync-track').innerHTML = '<option value="0">0: (default)</option>';
     document.getElementById('atempo-input').value = '1.000000';
     document.getElementById('offset-input').value = '0.000';
+    state.offsetEdited = false;
+    state.atempoEdited = false;
     document.getElementById('segment-overrides').innerHTML = '';
     document.getElementById('global-offset-row').style.display = '';
     for (const k of ['r-mode','r-atempo','r-offset','r-inliers','r-fit','r-precision','r-visual']) {
@@ -502,7 +543,8 @@ async function ensureSession() {
     const res = await apiPost('/api/sessions', {});
     _sessionId = res.session_id;
     sessionStorage.setItem('audiosync_session', _sessionId);
-    _sessionCache[_sessionId] = { label: 'New session', tasks: {}, active_task: null, ui_state: {}, version: 0, created_at: 0 };
+    _sessionCache[_sessionId] = { label: 'New session', tasks: {}, active_task: null, ui_state: {}, version: 0, created_at: 0, log_entries: [], log_cursor: 0 };
+    _logCursor = 0;
     await refreshSessionList();
     return _sessionId;
 }
@@ -550,10 +592,7 @@ async function runAlign() {
     refreshSessionList();
 
     startPoll('align', result.task_id,
-        (task) => {
-            if (_viewId !== myView) return;
-            log(`[Align] ${task.progress || 'Processing...'}`);
-        },
+        (task) => {},
         (task) => {
             if (_viewId !== myView) return;
             unlockButtons();
@@ -598,6 +637,8 @@ function showAlignResults(r) {
 
     document.getElementById('atempo-input').value = at.toFixed(6);
     document.getElementById('offset-input').value = off.toFixed(3);
+    state.offsetEdited = false;
+    state.atempoEdited = false;
 
     let modeText = `AUDIO (tracks ${st[0]}\u2194${st[1]})`;
     if (r.mode === 'audio-xcorr') modeText = `XCORR (tracks ${st[0]}\u2194${st[1]})`;
@@ -838,7 +879,8 @@ function startMergePoll(taskType, taskId, myView, initialProgress) {
             }
             refreshSessionList();
         },
-        initialProgress
+        initialProgress,
+        false
     );
 }
 
@@ -1323,17 +1365,37 @@ async function switchToSession(sid, sess) {
     resetState();
     renderSessionList(_sessionCache);
 
-    // Restore log entries from cache or server ui_state
+    // Restore logs: show cache immediately, then fetch gap from server
     const cached = _sessionCache[sid];
-    const logEntries = (cached && cached.log_entries && cached.log_entries.length)
-        ? cached.log_entries
-        : ((sess.ui_state && sess.ui_state.log_entries) || []);
-    if (logEntries.length) {
-        if (cached) cached.log_entries = logEntries;
+    _logCursor = 0;
+    if (cached && cached.log_entries && cached.log_entries.length) {
         const box = document.getElementById('log-box');
-        box.value = logEntries.join('\n') + '\n';
+        box.value = cached.log_entries.join('\n') + '\n';
         box.scrollTop = box.scrollHeight;
+        _logCursor = cached.log_cursor || 0;
     }
+    // Fetch any entries we missed from server
+    try {
+        const logRes = await fetch(`/api/session/${sid}/logs?after=${_logCursor}`);
+        if (logRes.ok) {
+            const logData = await logRes.json();
+            if (logData.entries.length) {
+                const box = document.getElementById('log-box');
+                if (!cached) _sessionCache[sid] = sess;
+                const c = _sessionCache[sid];
+                if (!c.log_entries) c.log_entries = [];
+                for (const entry of logData.entries) {
+                    box.value += entry.msg + '\n';
+                    c.log_entries.push(entry.msg);
+                    _logCursor = entry.idx;
+                }
+                box.scrollTop = box.scrollHeight;
+            } else if (logData.entries.length === 0 && !_logCursor) {
+                // No cache, no server logs — nothing to restore
+            }
+        }
+    } catch (e) {}
+    if (cached) cached.log_cursor = _logCursor;
 
     const ui = sess.ui_state || {};
     let lastAlignResult = null;
@@ -1449,10 +1511,12 @@ async function switchToSession(sid, sess) {
     }
 
     // Restore manual atempo/offset edits (overrides align result values)
-    if (ui.atempo !== undefined)
+    if (ui.atempo_edited && ui.atempo !== undefined)
         document.getElementById('atempo-input').value = ui.atempo;
-    if (ui.offset !== undefined)
+    if (ui.offset_edited && ui.offset !== undefined)
         document.getElementById('offset-input').value = ui.offset;
+    state.atempoEdited = !!ui.atempo_edited;
+    state.offsetEdited = !!ui.offset_edited;
 
     if (lastMergeResult) {
         document.getElementById('merge-progress').querySelector('.fill').style.width = '100%';
@@ -1464,8 +1528,11 @@ async function switchToSession(sid, sess) {
         const freshRes = await fetch(`/api/session/${sid}`);
         if (freshRes.ok) {
             const freshData = await freshRes.json();
-            const cachedLogs = _sessionCache[sid] ? _sessionCache[sid].log_entries : null;
-            if (cachedLogs) freshData.log_entries = cachedLogs;
+            const old = _sessionCache[sid];
+            if (old) {
+                if (old.log_entries) freshData.log_entries = old.log_entries;
+                if (old.log_cursor) freshData.log_cursor = old.log_cursor;
+            }
             _sessionCache[sid] = freshData;
             for (const [tid, t] of Object.entries(freshData.tasks || {})) {
                 if (t.status === 'running') {
@@ -1495,10 +1562,7 @@ async function switchToSession(sid, sess) {
         if (activeTaskType === 'align') {
             document.getElementById('align-progress').classList.add('progress-indeterminate');
             startPoll('align', activeTask,
-                (task) => {
-                    if (_viewId !== myView) return;
-                    log(`[Align] ${task.progress || 'Processing...'}`);
-                },
+                (task) => {},
                 (task) => {
                     if (_viewId !== myView) return;
                     unlockButtons();
@@ -1563,10 +1627,11 @@ async function refreshSessionList() {
     try {
         const res = await fetch('/api/sessions');
         const sessions = await res.json();
-        // Preserve log_entries from existing cache
         for (const [sid, sess] of Object.entries(sessions)) {
-            if (_sessionCache[sid] && _sessionCache[sid].log_entries) {
-                sess.log_entries = _sessionCache[sid].log_entries;
+            const old = _sessionCache[sid];
+            if (old) {
+                if (old.log_entries) sess.log_entries = old.log_entries;
+                if (old.log_cursor) sess.log_cursor = old.log_cursor;
             }
         }
         _sessionCache = sessions;
@@ -1584,10 +1649,15 @@ async function pollActiveSession() {
         if (!cached || cached.version !== version) {
             const fullRes = await fetch(`/api/session/${_sessionId}`);
             const sess = await fullRes.json();
-            if (cached && cached.log_entries) sess.log_entries = cached.log_entries;
+            if (cached) {
+                if (cached.log_entries) sess.log_entries = cached.log_entries;
+                if (cached.log_cursor) sess.log_cursor = cached.log_cursor;
+            }
             _sessionCache[_sessionId] = sess;
             renderSessionList(_sessionCache);
         }
+        // Keep log cache warm
+        if (!_runningTaskId) await _fetchAndDisplayLogs();
     } catch (e) {}
 }
 
@@ -1605,3 +1675,5 @@ async function init() {
 
 init();
 setInterval(pollActiveSession, 10000);
+document.getElementById('offset-input').addEventListener('input', () => { state.offsetEdited = true; });
+document.getElementById('atempo-input').addEventListener('input', () => { state.atempoEdited = true; });

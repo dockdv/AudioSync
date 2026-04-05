@@ -79,6 +79,8 @@ def _new_session():
             "active_task": None,
             "ui_state": {},
             "version": 0,
+            "log": [],
+            "log_idx": 0,
         }
     return sid
 
@@ -132,6 +134,17 @@ def _update_task(sid, tid, **kwargs):
                 sess["version"] += 1
 
 
+def _append_log(sid, msg, source="server"):
+    with _sessions_lock:
+        sess = _sessions.get(sid)
+        if not sess:
+            return
+        sess["log_idx"] += 1
+        sess["log"].append({"idx": sess["log_idx"], "msg": msg, "source": source})
+        if len(sess["log"]) > 1000:
+            sess["log"] = sess["log"][-1000:]
+
+
 def _ensure_task_finished(sid, tid):
     """Safety net: mark task as error if it's still running when its thread exits."""
     with _sessions_lock:
@@ -168,6 +181,7 @@ def _serialize_session(sess):
         "created_at": sess.get("created_wall", sess["created_at"]),
         "ui_state": sess.get("ui_state", {}),
         "version": sess.get("version", 0),
+        "log_idx": sess.get("log_idx", 0),
     }
 
 
@@ -289,6 +303,7 @@ def api_session_get(sid):
 @app.route("/api/session/<sid>/state", methods=["PATCH"])
 def api_session_state(sid):
     data = request.get_json() or {}
+    data.pop("log_entries", None)
     with _sessions_lock:
         sess = _sessions.get(sid)
         if not sess:
@@ -315,6 +330,35 @@ def api_session_version(sid):
             return jsonify({"error": "Session not found"}), 404
         ver = sess.get("version", 0)
     return jsonify({"version": ver})
+
+
+@app.route("/api/session/<sid>/logs")
+def api_session_logs_get(sid):
+    after = int(request.args.get("after", 0))
+    with _sessions_lock:
+        sess = _sessions.get(sid)
+        if not sess:
+            return jsonify({"error": "Session not found"}), 404
+        entries = [e for e in sess["log"] if e["idx"] > after]
+    return jsonify({"entries": entries})
+
+
+@app.route("/api/session/<sid>/logs", methods=["POST"])
+def api_session_logs_post(sid):
+    data = request.get_json() or {}
+    messages = data.get("messages", [])
+    with _sessions_lock:
+        sess = _sessions.get(sid)
+        if not sess:
+            return jsonify({"error": "Session not found"}), 404
+        for msg in messages[:50]:
+            sess["log_idx"] += 1
+            sess["log"].append({"idx": sess["log_idx"], "msg": str(msg),
+                                "source": "client"})
+        if len(sess["log"]) > 1000:
+            sess["log"] = sess["log"][-1000:]
+        idx = sess["log_idx"]
+    return jsonify({"ok": True, "log_idx": idx})
 
 
 @app.route("/api/session/<sid>/align", methods=["POST"])
@@ -349,6 +393,7 @@ def api_align(sid):
     def go():
         def cb(kind, msg):
             _update_task(sid, tid, progress=msg)
+            _append_log(sid, msg)
 
         try:
             with _sessions_lock:
@@ -424,6 +469,7 @@ def api_merge(sid):
 
         def progress_cb(kind, msg):
             _update_task(sid, tid, progress=f"{kind}:{msg}")
+            _append_log(sid, f"{kind}:{msg}")
 
         try:
             with _sessions_lock:
@@ -505,6 +551,7 @@ def api_remux(sid):
 
         def progress_cb(kind, msg):
             _update_task(sid, tid, progress=f"{kind}:{msg}")
+            _append_log(sid, f"{kind}:{msg}")
 
         try:
             with _sessions_lock:
@@ -606,6 +653,7 @@ def api_test_interleave(sid):
         try:
             def cb(kind, msg):
                 _update_task(sid, tid, progress=msg)
+                _append_log(sid, msg)
 
             cb("status", "Probing stream info...")
             info = fflib.probe(filepath)
