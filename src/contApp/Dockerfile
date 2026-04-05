@@ -8,8 +8,7 @@ RUN sed -i 's/^Components: main$/Components: main contrib non-free non-free-firm
     apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg mkvtoolnix \
-        intel-media-va-driver-non-free libva-drm2 \
-        libnvcuvid1 libnvidia-encode1 && \
+        intel-media-va-driver-non-free libva-drm2 && \
     rm -f /usr/bin/ffplay && \
     rm -rf /var/lib/apt/lists/*
 
