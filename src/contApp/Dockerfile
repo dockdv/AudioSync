@@ -3,12 +3,10 @@ FROM python:3.12-slim
 COPY src/webGUI/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-RUN sed -i 's/^Components: main$/Components: main contrib non-free non-free-firmware/' \
-    /etc/apt/sources.list.d/debian.sources && \
-    apt-get update && \
+RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg mkvtoolnix \
-        intel-media-va-driver-non-free libva-drm2 && \
+        intel-media-va-driver && \
     rm -f /usr/bin/ffplay && \
     rm -rf /var/lib/apt/lists/*
 
