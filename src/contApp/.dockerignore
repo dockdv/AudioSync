@@ -1,0 +1,20 @@
+# Git
+.git
+.gitignore
+.easy-git
+
+# Python caches
+__pycache__
+*.pyc
+
+# Virtual environment
+.venv/
+
+# IDE / editor
+.vscode
+
+# Uploads (don't bake in)
+src/webGUI/uploads/
+
+# Container build files (not needed inside image)
+src/contApp/

@@ -1,0 +1,109 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. v1.2.0)"
+        required: true
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - name: Validate version format
+        run: |
+          if [[ ! "${{ github.event.inputs.version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "ERROR: Version must match vX.Y.Z (e.g. v1.2.0)"
+            exit 1
+          fi
+
+      - name: Check release does not already exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "${{ github.event.inputs.version }}" &>/dev/null; then
+            echo "ERROR: Release ${{ github.event.inputs.version }} already exists"
+            exit 1
+          fi
+
+      - name: Update _version.py
+        run: |
+          echo '__version__ = "${{ github.event.inputs.version }}"' > src/webGUI/_version.py
+
+      - name: Commit and tag
+        run: |
+          git config user.name "dockdv"
+          git config user.email "dockdv@users.noreply.github.com"
+          git add src/webGUI/_version.py
+          git diff --cached --quiet || git commit -m "release: ${{ github.event.inputs.version }}"
+          git tag -f "${{ github.event.inputs.version }}"
+          git push origin main
+          git push origin "${{ github.event.inputs.version }}" --force
+
+  build-exe:
+    needs: prepare
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.version }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller
+          python -m pip install -r src\webGUI\requirements.txt
+
+      - name: Build exe
+        run: |
+          python -m PyInstaller `
+            --onefile `
+            --console `
+            --name "AudioSync" `
+            --distpath dist `
+            --hidden-import=sync_engine `
+            --hidden-import=fflib `
+            --hidden-import=_version `
+            --add-data "src\webGUI\templates;templates" `
+            --exclude-module=cv2 `
+            --exclude-module=PIL `
+            --exclude-module=tkinter `
+            src\webGUI\app.py
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: AudioSync-exe
+          path: dist/AudioSync.exe
+
+  publish:
+    needs: build-exe
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: AudioSync-exe
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "${{ github.event.inputs.version }}" \
+            AudioSync.exe \
+            --title "${{ github.event.inputs.version }}" \
+            --generate-notes
