@@ -174,8 +174,9 @@ function _fetchAndDisplayLogs() {
             if (cache && !cache.log_entries) cache.log_entries = [];
             for (const entry of data.entries) {
                 if (entry.source === 'server') {
-                    box.value += entry.msg + '\n';
-                    if (cache) cache.log_entries.push(entry.msg);
+                    const line = `[${entry.ts}] ${entry.msg}`;
+                    box.value += line + '\n';
+                    if (cache) cache.log_entries.push(line);
                 }
                 _logCursor = entry.idx;
             }
@@ -660,8 +661,8 @@ function showAlignResults(r) {
         vizEl.textContent = `fine-tuned: ${vrSign}${r.visual_refined_offset.toFixed(3)}s`;
         vizEl.style.color = 'var(--blue)';
     } else {
-        vizEl.textContent = 'confirmed';
-        vizEl.style.color = 'var(--green)';
+        vizEl.textContent = 'no match';
+        vizEl.style.color = 'var(--dim)';
     }
 
     state.segments = r.segments || null;
@@ -675,7 +676,6 @@ function showAlignResults(r) {
     const aoOff = r.audio_offset !== undefined ? r.audio_offset : off;
     const aoSign = aoOff >= 0 ? '+' : '';
     let txt = `Audio alignment:  offset=${aoSign}${aoOff.toFixed(3)}s  speed=${(1.0/aoSpd).toFixed(6)}\n`;
-    txt += `Visual check:     confirmed\n`;
     if (r.visual_refined_offset != null) {
         const vrSign = r.visual_refined_offset >= 0 ? '+' : '';
         txt += `Visual fine-tune:  offset ${aoSign}${aoOff.toFixed(3)}s \u2192 ${vrSign}${r.visual_refined_offset.toFixed(3)}s\n`;
@@ -1385,8 +1385,9 @@ async function switchToSession(sid, sess) {
                 const c = _sessionCache[sid];
                 if (!c.log_entries) c.log_entries = [];
                 for (const entry of logData.entries) {
-                    box.value += entry.msg + '\n';
-                    c.log_entries.push(entry.msg);
+                    const line = entry.ts ? `[${entry.ts}] ${entry.msg}` : entry.msg;
+                    box.value += line + '\n';
+                    c.log_entries.push(line);
                     _logCursor = entry.idx;
                 }
                 box.scrollTop = box.scrollHeight;

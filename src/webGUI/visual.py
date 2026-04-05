@@ -232,6 +232,10 @@ def refine_offset_visual(v1_path, v2_path, offset, speed, dur1, dur2,
         t2_end = min(dur2, expected_v2 + 10.0)
         v2_keyframes = fflib.get_keyframe_timestamps(v2_path, t2_start, t2_end)
         if not v2_keyframes:
+            if progress_cb:
+                progress_cb("status",
+                            f"Visual fine-tune: V2 no keyframes "
+                            f"at {expected_v2:.1f}s")
             return None
 
         v2_frame_interval = 1.0 / 24.0
@@ -242,6 +246,9 @@ def refine_offset_visual(v1_path, v2_path, offset, speed, dur1, dur2,
                 v2_frame_interval = min(v2_frame_interval,
                                         min(g for g in gaps if g > 0))
 
+        best_sim = -1.0
+        best_kf = None
+        n_cuts = 0
         for kf_time in v2_keyframes:
             if cancel and hasattr(cancel, 'check'):
                 cancel.check()
@@ -250,9 +257,29 @@ def refine_offset_visual(v1_path, v2_path, offset, speed, dur1, dur2,
                 v2_path, kf_time, prev_time, v2_w, v2_h)
             if not is_cut:
                 continue
+            n_cuts += 1
             match_sim = frame_similarity(v1_frame, v2_frame)
+            if match_sim > best_sim:
+                best_sim = match_sim
+                best_kf = kf_time
             if match_sim > 0.8:
+                if progress_cb:
+                    progress_cb("status",
+                                f"Visual fine-tune: V1 {v1_time:.1f}s "
+                                f"\u2194 V2 {kf_time:.1f}s "
+                                f"p={match_sim:.3f} \u2713")
                 return v1_time - kf_time
+        if progress_cb:
+            if n_cuts == 0:
+                progress_cb("status",
+                            f"Visual fine-tune: V1 {v1_time:.1f}s "
+                            f"\u2194 V2 no cuts found in "
+                            f"{len(v2_keyframes)} keyframes \u2717")
+            else:
+                progress_cb("status",
+                            f"Visual fine-tune: V1 {v1_time:.1f}s "
+                            f"\u2194 V2 best={best_kf:.1f}s "
+                            f"p={best_sim:.3f} \u2717")
         return None
 
     # Interleaved: find V1 cut → match in V2 → next location
