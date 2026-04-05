@@ -176,7 +176,8 @@ function _fetchAndDisplayLogs() {
             if (cache && !cache.log_entries) cache.log_entries = [];
             for (const entry of data.entries) {
                 if (entry.source === 'server') {
-                    const line = `[${entry.ts}] ${entry.msg}`;
+                    const ts = new Date(entry.ts * 1000).toLocaleTimeString();
+                    const line = `[${ts}] ${entry.msg}`;
                     box.value += line + '\n';
                     if (cache) cache.log_entries.push(line);
                 }

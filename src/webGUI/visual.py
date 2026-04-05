@@ -146,14 +146,14 @@ def refine_boundary_visual(v1_path, v2_path, segments, speed,
     return refined
 
 
-def _is_hard_cut(path, kf_time, prev_time, w, h, mse_threshold=500):
+def _is_hard_cut(path, kf_time, prev_time, w, h, mse_threshold=500, hdr=False):
     """Check if a keyframe is a hard cut by comparing to previous frame.
 
     Returns (is_cut, keyframe_frame, mse).
     Uses MSE (mean squared error) for reliable cut detection.
     """
-    frame_kf = fflib.extract_frame_full(path, kf_time, w, h)
-    frame_prev = fflib.extract_frame_full(path, prev_time, w, h)
+    frame_kf = fflib.extract_frame_full(path, kf_time, w, h, hdr=hdr)
+    frame_prev = fflib.extract_frame_full(path, prev_time, w, h, hdr=hdr)
 
     if frame_kf is None or frame_prev is None:
         return False, None, -1.0
@@ -162,7 +162,7 @@ def _is_hard_cut(path, kf_time, prev_time, w, h, mse_threshold=500):
 
 
 def _find_hard_cut_from(keyframes, idx, path, w, h, frame_interval,
-                        cancel=None):
+                        cancel=None, hdr=False):
     """Walk keyframes starting at idx until a hard cut is found.
 
     Returns (keyframe_time, keyframe_frame) or (None, None).
@@ -172,7 +172,8 @@ def _find_hard_cut_from(keyframes, idx, path, w, h, frame_interval,
             cancel.check()
         kf_time = keyframes[i]
         prev_time = max(0.0, kf_time - frame_interval)
-        is_cut, frame_kf, sim = _is_hard_cut(path, kf_time, prev_time, w, h)
+        is_cut, frame_kf, sim = _is_hard_cut(path, kf_time, prev_time, w, h,
+                                              hdr=hdr)
         if is_cut:
             return kf_time, frame_kf
     return None, None
@@ -192,10 +193,11 @@ def refine_offset_visual(v1_path, v2_path, offset, speed, dur1, dur2,
     if progress_cb:
         progress_cb("status", "Visual fine-tune: finding V1 hard cuts...")
 
-    # Get V1 video resolution
+    # Get V1 video resolution and HDR status
     v1_w, v1_h = fflib.get_video_resolution(v1_path)
     if not v1_w or not v1_h:
         return None
+    v1_hdr = fflib.is_hdr(v1_path)
 
     # Define 10 equally spaced locations
     n_locations = 10
@@ -219,12 +221,13 @@ def refine_offset_visual(v1_path, v2_path, offset, speed, dur1, dur2,
                 frame_interval = min(frame_interval, min(pos_gaps))
         return _find_hard_cut_from(keyframes, 0, v1_path,
                                    v1_w, v1_h, frame_interval,
-                                   cancel=cancel)
+                                   cancel=cancel, hdr=v1_hdr)
 
-    # Get V2 resolution
+    # Get V2 resolution and HDR status
     v2_w, v2_h = fflib.get_video_resolution(v2_path)
     if not v2_w or not v2_h:
         return None
+    v2_hdr = fflib.is_hdr(v2_path)
 
     def _match_in_v2(v1_time, v1_frame):
         expected_v2 = (v1_time - offset) / speed
@@ -254,7 +257,7 @@ def refine_offset_visual(v1_path, v2_path, offset, speed, dur1, dur2,
                 cancel.check()
             prev_time = max(0.0, kf_time - v2_frame_interval)
             is_cut, v2_frame, sim = _is_hard_cut(
-                v2_path, kf_time, prev_time, v2_w, v2_h)
+                v2_path, kf_time, prev_time, v2_w, v2_h, hdr=v2_hdr)
             if not is_cut:
                 continue
             n_cuts += 1

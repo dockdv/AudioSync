@@ -449,11 +449,18 @@ def decode_audio(handle, audio_track_index, target_sr, vocal_filter=False,
 FRAME_W, FRAME_H = 160, 120
 
 
-def extract_frame(handle, timestamp, width=FRAME_W, height=FRAME_H):
+def _tonemap_vf(width, height):
+    """Build a -vf filter chain that tone-maps HDR→SDR then scales to gray."""
+    return (f"zscale=t=linear:npl=100,tonemap=hable,"
+            f"zscale=t=bt709:m=bt709,format=gray,"
+            f"scale={width}:{height}")
+
+
+def extract_frame(handle, timestamp, width=FRAME_W, height=FRAME_H, hdr=False):
     global _hwaccel_failed
     ff = _ffmpeg
     hw = _hwaccel_flags()
-    if hw:
+    if hw and not hdr:
         cmd = [ff, "-v", "quiet"] + hw + [
             "-ss", f"{timestamp:.3f}",
             "-i", handle,
@@ -470,14 +477,23 @@ def extract_frame(handle, timestamp, width=FRAME_W, height=FRAME_H):
             pass
         _hwaccel_failed = True
 
-    cmd = [ff, "-v", "quiet",
-           "-ss", f"{timestamp:.3f}",
-           "-i", handle,
-           "-vframes", "1",
-           "-s", f"{width}x{height}",
-           "-f", "rawvideo",
-           "-pix_fmt", "gray",
-           "pipe:1"]
+    if hdr:
+        cmd = [ff, "-v", "quiet",
+               "-ss", f"{timestamp:.3f}",
+               "-i", handle,
+               "-vframes", "1",
+               "-vf", _tonemap_vf(width, height),
+               "-f", "rawvideo",
+               "pipe:1"]
+    else:
+        cmd = [ff, "-v", "quiet",
+               "-ss", f"{timestamp:.3f}",
+               "-i", handle,
+               "-vframes", "1",
+               "-s", f"{width}x{height}",
+               "-f", "rawvideo",
+               "-pix_fmt", "gray",
+               "pipe:1"]
     raw = _run(cmd, timeout=30)
     if len(raw) != height * width:
         return None
@@ -540,7 +556,17 @@ def get_video_resolution(handle):
         return None, None
 
 
-def extract_frame_full(handle, timestamp, width, height):
+def is_hdr(handle):
+    """Check if the first video stream uses HDR transfer (PQ or HLG)."""
+    fp = _ffprobe
+    raw = _run([fp, "-v", "quiet", "-select_streams", "v:0",
+                "-show_entries", "stream=color_transfer",
+                "-of", "csv=p=0", handle], timeout=10)
+    transfer = raw.decode("utf-8", errors="replace").strip()
+    return transfer in ("smpte2084", "arib-std-b67")
+
+
+def extract_frame_full(handle, timestamp, width, height, hdr=False):
     """Extract a single frame at specified resolution as grayscale.
 
     Returns numpy array of shape (H, W) with dtype float32, or None.
@@ -548,7 +574,7 @@ def extract_frame_full(handle, timestamp, width, height):
     global _hwaccel_failed
     ff = _ffmpeg
     hw = _hwaccel_flags()
-    if hw:
+    if hw and not hdr:
         cmd = [ff, "-v", "quiet"] + hw + [
             "-ss", f"{timestamp:.3f}",
             "-i", handle,
@@ -565,14 +591,23 @@ def extract_frame_full(handle, timestamp, width, height):
             pass
         _hwaccel_failed = True
 
-    cmd = [ff, "-v", "quiet",
-           "-ss", f"{timestamp:.3f}",
-           "-i", handle,
-           "-vframes", "1",
-           "-s", f"{width}x{height}",
-           "-f", "rawvideo",
-           "-pix_fmt", "gray",
-           "pipe:1"]
+    if hdr:
+        cmd = [ff, "-v", "quiet",
+               "-ss", f"{timestamp:.3f}",
+               "-i", handle,
+               "-vframes", "1",
+               "-vf", _tonemap_vf(width, height),
+               "-f", "rawvideo",
+               "pipe:1"]
+    else:
+        cmd = [ff, "-v", "quiet",
+               "-ss", f"{timestamp:.3f}",
+               "-i", handle,
+               "-vframes", "1",
+               "-s", f"{width}x{height}",
+               "-f", "rawvideo",
+               "-pix_fmt", "gray",
+               "pipe:1"]
     raw = _run(cmd, timeout=30)
     if len(raw) != height * width:
         return None

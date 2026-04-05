@@ -135,13 +135,13 @@ def _update_task(sid, tid, **kwargs):
 
 
 def _append_log(sid, msg, source="server"):
-    import datetime
+    import datetime, time
     with _sessions_lock:
         sess = _sessions.get(sid)
         if not sess:
             return
         sess["log_idx"] += 1
-        ts = datetime.datetime.now().strftime("%I:%M:%S %p")
+        ts = time.time()
         sess["log"].append({"idx": sess["log_idx"], "msg": msg, "source": source, "ts": ts})
         if len(sess["log"]) > 1000:
             sess["log"] = sess["log"][-1000:]
