@@ -319,6 +319,9 @@ async function loadVideo(n) {
         log(`[V${n}] Probe error: ${result.error}`);
         return;
     }
+    if (result.warning) {
+        log(`[V${n}] ${result.warning}`);
+    }
 
     const streamCounts = (result.streams || []).reduce((acc, s) => {
         acc[s.codec_type] = (acc[s.codec_type] || 0) + 1;
@@ -330,7 +333,7 @@ async function loadVideo(n) {
     state[`v${n}`] = {
         path: filepath,
         tracks: result.tracks,
-        streams: result.streams || [],
+        streams: (result.streams || []).filter(s => !s.empty),
         duration: result.duration,
     };
 

@@ -259,7 +259,7 @@ def api_probe():
     if not filepath or not os.path.isfile(filepath):
         return jsonify({"error": f"File not found: {filepath}"}), 400
 
-    tracks, all_streams, duration, method, error = probe_full(filepath)
+    tracks, all_streams, duration, method, error, warning = probe_full(filepath)
 
     change_needed, ext = needs_container_change(filepath)
 
@@ -268,6 +268,7 @@ def api_probe():
         "streams": all_streams,
         "method": method,
         "error": error,
+        "warning": warning,
         "duration": duration,
         "duration_fmt": format_timestamp(duration),
         "container_change": change_needed,

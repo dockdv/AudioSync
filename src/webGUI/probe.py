@@ -72,11 +72,16 @@ def probe_full(filepath):
                 "start_time": a.get("start_time", 0.0),
                 "bit_rate": a.get("bit_rate", 0),
             })
+        empty_idxs = [s["stream_index"] for s in streams if s.get("empty")]
+        warning = ""
+        if empty_idxs:
+            warning = ("Skipped empty audio track(s) with no packets: "
+                       + ", ".join(f"#{i}" for i in empty_idxs))
         if tracks:
-            return tracks, streams, duration, "libav", ""
-        return tracks, streams, duration, "libav", "No audio streams found"
+            return tracks, streams, duration, "libav", "", warning
+        return tracks, streams, duration, "libav", "No audio streams found", warning
     except Exception as e:
-        return [], [], 0.0, "none", f"libAV probe error: {e}"
+        return [], [], 0.0, "none", f"libAV probe error: {e}", ""
 
 def get_duration(filepath):
     try:

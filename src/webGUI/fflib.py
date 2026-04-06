@@ -276,11 +276,46 @@ def _parse_frame_rate(s):
         return 0.0
 
 
+def _audio_streams_with_packets(handle, max_seconds=60):
+    """Return set of stream indices that emit at least one audio packet
+    within the first ``max_seconds`` of the file. Used to detect phantom
+    audio tracks (TrackEntry declared but no frames muxed in)."""
+    fp = _ffprobe
+    raw = _run([fp, "-v", "error",
+                "-read_intervals", f"%+{max_seconds}",
+                "-select_streams", "a",
+                "-show_entries", "packet=stream_index",
+                "-of", "csv=p=0", handle], timeout=60)
+    present = set()
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        line = line.strip().rstrip(",")
+        if not line:
+            continue
+        try:
+            present.add(int(line))
+        except ValueError:
+            pass
+    return present
+
+
 def probe(handle):
     fp = _ffprobe
     raw = _run([fp, "-v", "quiet", "-print_format", "json",
                 "-show_format", "-show_streams", handle], timeout=60)
     data = json.loads(raw)
+
+    declared_audio = {int(s.get("index", 0))
+                      for s in data.get("streams", [])
+                      if s.get("codec_type") == "audio"}
+    try:
+        present_audio = _audio_streams_with_packets(handle)
+    except Exception:
+        present_audio = set(declared_audio)
+    # Defensive: if probe returned nothing for a file that does declare
+    # audio, fall back to trusting the header rather than dropping every
+    # track.
+    if declared_audio and not present_audio:
+        present_audio = set(declared_audio)
 
     audio = []
     streams = []
@@ -306,6 +341,12 @@ def probe(handle):
         }
 
         if codec_type == "audio":
+            if stream_index not in present_audio:
+                entry["empty"] = True
+                entry["channels"] = int(s.get("channels", 0))
+                entry["sample_rate"] = int(s.get("sample_rate", 0))
+                streams.append(entry)
+                continue
             entry["audio_index"] = audio_idx
             entry["channels"] = int(s.get("channels", 0))
             entry["sample_rate"] = int(s.get("sample_rate", 0))
