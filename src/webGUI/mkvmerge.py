@@ -139,9 +139,21 @@ def mux_to_mkv(mctx):
 
     cmd = [mkvm, "--gui-mode", "-o", mctx.out_path]
 
+    dur_limit = getattr(mctx, "duration_limit", None)
+    if dur_limit and dur_limit > 0:
+        h = int(dur_limit // 3600)
+        m = int((dur_limit % 3600) // 60)
+        s = dur_limit % 60
+        cmd += ["--split",
+                f"parts:00:00:00.000-{h:02d}:{m:02d}:{s:06.3f}"]
+
     if mctx.v1_vid_tids:
         cmd += ["--video-tracks",
                 ",".join(str(t) for t in mctx.v1_vid_tids)]
+        if mctx.v1_vid_metadata:
+            for i, tid in enumerate(mctx.v1_vid_tids):
+                if i < len(mctx.v1_vid_metadata):
+                    _apply_meta(cmd, tid, mctx.v1_vid_metadata[i])
     else:
         cmd += ["--no-video"]
 

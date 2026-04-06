@@ -77,9 +77,9 @@ def probe_full(filepath):
         if empty_idxs:
             warning = ("Skipped empty audio track(s) with no packets: "
                        + ", ".join(f"#{i}" for i in empty_idxs))
-        if tracks:
-            return tracks, streams, duration, "libav", "", warning
-        return tracks, streams, duration, "libav", "No audio streams found", warning
+        if not tracks and not warning:
+            warning = "No audio streams found"
+        return tracks, streams, duration, "libav", "", warning
     except Exception as e:
         return [], [], 0.0, "none", f"libAV probe error: {e}", ""
 

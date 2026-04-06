@@ -164,18 +164,17 @@ async function apiPost(url, data) {
 function lockButtons(runningType) {
     document.getElementById('align-btn').disabled = true;
     document.getElementById('merge-btn').disabled = true;
-    if (runningType === 'align') {
-        document.getElementById('align-stop').classList.remove('hidden');
-    } else if (runningType === 'merge' || runningType === 'remux') {
-        document.getElementById('merge-stop').classList.remove('hidden');
-    }
+    const samplesBtn = document.getElementById('samples-btn');
+    if (samplesBtn) samplesBtn.disabled = true;
+    document.getElementById('global-stop').classList.remove('hidden');
 }
 
 function unlockButtons() {
     document.getElementById('align-btn').disabled = false;
     document.getElementById('merge-btn').disabled = false;
-    document.getElementById('align-stop').classList.add('hidden');
-    document.getElementById('merge-stop').classList.add('hidden');
+    const samplesBtn = document.getElementById('samples-btn');
+    if (samplesBtn) samplesBtn.disabled = false;
+    document.getElementById('global-stop').classList.add('hidden');
 }
 
 function _fetchAndDisplayLogs() {
@@ -458,6 +457,7 @@ function fillStreamPanel(n) {
     const container = document.getElementById(`v${n}-tracks`);
     container.innerHTML = '';
     const streams = (state[`v${n}`].streams || []).filter(s =>
+        (n === 1 && s.codec_type === 'video') ||
         s.codec_type === 'audio' || s.codec_type === 'subtitle' || s.codec_type === 'attachment');
     const sel = state.selected[`v${n}`];
     const src = `v${n}`;
@@ -488,13 +488,15 @@ function fillStreamPanel(n) {
         if (s.codec_type !== lastType) {
             const hdr = document.createElement('p');
             hdr.style.cssText = 'color:var(--dim);font-size:11px;margin:8px 0 4px;font-weight:600;';
-            hdr.textContent = s.codec_type === 'audio' ? 'Audio' : s.codec_type === 'subtitle' ? 'Subtitles' : 'Attachments';
+            hdr.textContent = s.codec_type === 'video' ? 'Video' : s.codec_type === 'audio' ? 'Audio' : s.codec_type === 'subtitle' ? 'Subtitles' : 'Attachments';
             container.appendChild(hdr);
             lastType = s.codec_type;
         }
         const si = s.stream_index;
         const key = `${src}_s${si}`;
-        if (sel[si] === undefined) sel[si] = true;
+        const isVideo = s.codec_type === 'video';
+        if (isVideo) sel[si] = true;
+        else if (sel[si] === undefined) sel[si] = true;
         const label = document.createElement('label');
         label.className = 'track-item';
         label.style.cursor = 'pointer';
@@ -502,7 +504,12 @@ function fillStreamPanel(n) {
         cb.type = 'checkbox';
         cb.checked = sel[si];
         cb.dataset.si = si;
-        cb.addEventListener('change', () => { sel[si] = cb.checked; saveUIState(); });
+        if (isVideo) {
+            cb.disabled = true;
+            cb.title = 'Video track is always included';
+        } else {
+            cb.addEventListener('change', () => { sel[si] = cb.checked; saveUIState(); });
+        }
         label.appendChild(cb);
         label.appendChild(document.createTextNode(` ${streamLabel(s)}${overrideLabel(key)}`));
         container.appendChild(label);
@@ -773,10 +780,11 @@ function prepareMerge(atempo, offset) {
     const v1StreamIndices = getSelectedIndices(1);
     const metadata = collectMetadata(1, 'audio');
     const sub_metadata = collectMetadata(1, 'subtitle');
+    const v1_vid_metadata = collectMetadata(1, 'video');
 
     if (isRemuxMode()) {
         const { sorted: sortedMeta, order: audioOrder } = reorderAudioTracks(metadata, state.defaultAudioIdx);
-        const params = { v1_path: v1, out_path: outPath, v1_stream_indices: v1StreamIndices, v1_duration: state.v1.duration, v1_streams: state.v1.streams, v1_tracks: state.v1.tracks, metadata: sortedMeta, sub_metadata, default_audio: 0, audio_order: audioOrder, v1_has_attachments: getSelectedIndices(1, 'attachment').length > 0 };
+        const params = { v1_path: v1, out_path: outPath, v1_stream_indices: v1StreamIndices, v1_duration: state.v1.duration, v1_streams: state.v1.streams, v1_tracks: state.v1.tracks, metadata: sortedMeta, sub_metadata, v1_vid_metadata, default_audio: 0, audio_order: audioOrder, v1_has_attachments: getSelectedIndices(1, 'attachment').length > 0 };
         state.mergeParams = params;
         log(`[Remux] Ready \u2192 ${basename(outPath)}`);
         return;
@@ -787,7 +795,7 @@ function prepareMerge(atempo, offset) {
     const v2_sub_metadata = collectMetadata(2, 'subtitle');
     const { sorted: sortedMeta, order: audioOrder } = reorderAudioTracks(allAudioMeta, state.defaultAudioIdx);
     const gainMatch = document.getElementById('gain-match-cb').checked;
-    const params = { v1_path: v1, v2_path: v2, out_path: outPath, atempo, offset, v1_stream_indices: v1StreamIndices, v2_stream_indices: v2StreamIndices, v2_sub_metadata, v1_duration: state.v1.duration, v1_streams: state.v1.streams, v1_tracks: state.v1.tracks, v2_streams: state.v2.streams, v2_tracks: state.v2.tracks, metadata: sortedMeta, sub_metadata, default_audio: 0, audio_order: audioOrder, gain_match: gainMatch, v1_lufs: state.v1Lufs, v2_lufs: state.v2Lufs, v1_has_attachments: getSelectedIndices(1, 'attachment').length > 0, v2_has_attachments: getSelectedIndices(2, 'attachment').length > 0 };
+    const params = { v1_path: v1, v2_path: v2, out_path: outPath, atempo, offset, v1_stream_indices: v1StreamIndices, v2_stream_indices: v2StreamIndices, v2_sub_metadata, v1_duration: state.v1.duration, v1_streams: state.v1.streams, v1_tracks: state.v1.tracks, v2_streams: state.v2.streams, v2_tracks: state.v2.tracks, metadata: sortedMeta, sub_metadata, v1_vid_metadata, default_audio: 0, audio_order: audioOrder, gain_match: gainMatch, v1_lufs: state.v1Lufs, v2_lufs: state.v2Lufs, v1_has_attachments: getSelectedIndices(1, 'attachment').length > 0, v2_has_attachments: getSelectedIndices(2, 'attachment').length > 0 };
     if (state.segments && state.segments.length > 1) {
         params.segments = state.segments;
     }
@@ -904,9 +912,14 @@ function startMergePoll(taskType, taskId, myView, initialProgress) {
     );
 }
 
-async function runMerge() {
+async function runCreateSample() {
+    return runMerge(300);
+}
+
+async function runMerge(durationLimit) {
     if (_runningTaskId) { alert('A task is already running. Stop it first.'); return; }
     const remux = isRemuxMode();
+    const isSample = durationLimit && durationLimit > 0;
 
     if (remux) {
         if (!state.v1.path) { alert('Load Video 1 first.'); return; }
@@ -922,9 +935,16 @@ async function runMerge() {
         if (getSelectedIndices(2, 'audio').length === 0) { alert('Select at least one V2 audio track.'); return; }
     }
 
-    const currentOutPath = document.getElementById('out-path-input').value.trim() || getDefaultOutputPath();
+    let currentOutPath = document.getElementById('out-path-input').value.trim() || getDefaultOutputPath();
+    if (isSample) {
+        const dot = currentOutPath.lastIndexOf('.');
+        currentOutPath = (dot > 0)
+            ? currentOutPath.slice(0, dot) + '.sample' + currentOutPath.slice(dot)
+            : currentOutPath + '.sample';
+    }
     if (state.mergeParams) {
         state.mergeParams.out_path = currentOutPath;
+        state.mergeParams.duration_limit = isSample ? durationLimit : null;
     }
 
     if (!remux && state.containerChange && !confirm(`Container '${state.containerExt}' doesn't support multi-audio.\nOutput will use .mkv.\n\nContinue?`)) return;
@@ -942,9 +962,9 @@ async function runMerge() {
 
     lockButtons('merge');
     document.getElementById('merge-progress').querySelector('.fill').style.width = '0%';
-    const taskLabel = remux ? 'Remux' : 'Merge';
+    const taskLabel = isSample ? 'Sample' : (remux ? 'Remux' : 'Merge');
     logSeparator(taskLabel);
-    log(`[${taskLabel}] Starting...`);
+    log(`[${taskLabel}] Starting${isSample ? ` (\u2248 ${Math.round(durationLimit/60)} min)` : ''}...`);
 
     const body = { ...state.mergeParams };
     const endpoint = remux ? 'remux' : 'merge';
@@ -1190,7 +1210,7 @@ function buildEditorTrack(key, stream) {
     const ovr = state.trackOverrides[key] || {};
     return {
         key,
-        group: stream.codec_type === 'subtitle' ? 'Subtitles' : 'Audio',
+        group: stream.codec_type === 'video' ? 'Video' : stream.codec_type === 'subtitle' ? 'Subtitles' : 'Audio',
         label: streamLabel(stream),
         origLang: stream.language || 'und',
         origTitle: stream.title || '',
@@ -1203,6 +1223,10 @@ function buildEditorTracksForSource(n) {
     const tracks = [];
     const sel = state.selected[`v${n}`] || {};
     for (const s of state[`v${n}`].streams || []) {
+        if (n === 1 && s.codec_type === 'video') {
+            tracks.push(buildEditorTrack(`v${n}_s${s.stream_index}`, s));
+            continue;
+        }
         if ((s.codec_type === 'audio' || s.codec_type === 'subtitle') && sel[s.stream_index])
             tracks.push(buildEditorTrack(`v${n}_s${s.stream_index}`, s));
     }
@@ -1224,7 +1248,7 @@ function openMetadataEditor(title, tracks) {
     overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center;';
     let html = `<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:20px;min-width:500px;max-width:700px;max-height:80vh;overflow-y:auto;">`;
     html += `<h3 style="color:var(--ac);margin-bottom:12px;">${title}</h3>`;
-    html += `<p style="color:var(--dim);font-size:12px;margin-bottom:12px;">Edit language and title for audio and subtitle tracks.</p>`;
+    html += `<p style="color:var(--dim);font-size:12px;margin-bottom:12px;">Edit language and title for video, audio and subtitle tracks.</p>`;
 
     let lastGroup = '';
     tracks.forEach(t => {

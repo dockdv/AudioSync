@@ -98,7 +98,6 @@
                 </div>
                 <div class="row mt-4">
                     <button class="btn-accent" id="align-btn" onclick="runAlign()" style="flex:1">Auto-Align</button>
-                    <button class="btn-red hidden" id="align-stop" onclick="cancelRunningTask()">Stop</button>
                 </div>
                 <div class="progress-bar" id="align-progress"><div class="fill"></div></div>
             </div>
@@ -154,8 +153,13 @@
                     <button class="btn-blue btn-sm" onclick="openDefaultAudioEditor()" style="flex:1">Default Audio Track...</button>
                 </div>
                 <div class="row">
+                    <button class="btn-blue" id="samples-btn" onclick="runCreateSample()" style="flex:1">Create Sample</button>
+                </div>
+                <div class="row">
                     <button class="btn-green" id="merge-btn" onclick="runMerge()" style="flex:1">Run Merge</button>
-                    <button class="btn-red hidden" id="merge-stop" onclick="cancelRunningTask()">Stop</button>
+                </div>
+                <div class="row">
+                    <button class="btn-red hidden" id="global-stop" onclick="cancelRunningTask()" style="flex:1">Stop</button>
                 </div>
                 <div class="progress-bar" id="merge-progress"><div class="fill"></div></div>
                 <button class="btn-red btn-sm mt-4" onclick="closeSession()" style="width:100%">Close Session</button>

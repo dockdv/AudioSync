@@ -307,10 +307,13 @@ def probe(handle):
     declared_audio = {int(s.get("index", 0))
                       for s in data.get("streams", [])
                       if s.get("codec_type") == "audio"}
-    try:
-        present_audio = _audio_streams_with_packets(handle)
-    except Exception:
-        present_audio = set(declared_audio)
+    if not declared_audio:
+        present_audio = set()
+    else:
+        try:
+            present_audio = _audio_streams_with_packets(handle)
+        except Exception:
+            present_audio = set(declared_audio)
     # Defensive: if probe returned nothing for a file that does declare
     # audio, fall back to trusting the header rather than dropping every
     # track.

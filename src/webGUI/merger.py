@@ -157,6 +157,10 @@ def prepare_merge(mctx):
     mctx.v1_dur = (mctx.v1_duration
                    or mctx.v1_info.get("duration", 0)
                    or get_duration(mctx.v1_path))
+    if (getattr(mctx, "duration_limit", None)
+            and mctx.duration_limit > 0
+            and (mctx.v1_dur <= 0 or mctx.duration_limit < mctx.v1_dur)):
+        mctx.v1_dur = float(mctx.duration_limit)
     _classify_v1_streams(mctx)
     _compute_v1_tids(mctx)
     if not mctx.is_remux:
@@ -563,6 +567,13 @@ def _mux_pass(mctx, out_path):
             title = meta.get("title") or ""
             cmd += [f"-metadata:s:a:{i}", f"language={lang}"]
             cmd += [f"-metadata:s:a:{i}", f"title={title}"]
+
+    if mctx.v1_vid_metadata:
+        for i, meta in enumerate(mctx.v1_vid_metadata):
+            lang = meta.get("language") or ""
+            title = meta.get("title") or ""
+            cmd += [f"-metadata:s:v:{i}", f"language={lang}"]
+            cmd += [f"-metadata:s:v:{i}", f"title={title}"]
 
     if mctx.default_audio_index is not None:
         n_audio = len(audio_maps)

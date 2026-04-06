@@ -73,6 +73,8 @@ class SessionContext:
     default_audio_index: int = None
     v1_sub_metadata: list = None
     v2_sub_metadata: list = None
+    v1_vid_metadata: list = None
+    duration_limit: float = None
     gain_match: bool = False
     v1_has_attachments: bool = True
     v2_has_attachments: bool = False

@@ -499,6 +499,8 @@ def api_merge(sid):
                 ctx.audio_metadata = data.get("metadata")
                 ctx.v1_sub_metadata = data.get("sub_metadata")
                 ctx.v2_sub_metadata = data.get("v2_sub_metadata")
+                ctx.v1_vid_metadata = data.get("v1_vid_metadata")
+                ctx.duration_limit = data.get("duration_limit")
                 ctx.default_audio_index = data.get("default_audio")
                 ctx.audio_order = data.get("audio_order")
                 ctx.gain_match = data.get("gain_match", False)
@@ -580,6 +582,8 @@ def api_remux(sid):
                 ctx.v1_duration = data.get("v1_duration", 0)
                 ctx.audio_metadata = data.get("metadata")
                 ctx.v1_sub_metadata = data.get("sub_metadata")
+                ctx.v1_vid_metadata = data.get("v1_vid_metadata")
+                ctx.duration_limit = data.get("duration_limit")
                 ctx.default_audio_index = data.get("default_audio")
                 ctx.audio_order = data.get("audio_order")
                 v1_info = {"streams": data.get("v1_streams", []),
