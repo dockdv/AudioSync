@@ -174,8 +174,18 @@ def _find_hard_cut_from(keyframes, idx, path, w, h, frame_interval,
         prev_time = max(0.0, kf_time - frame_interval)
         is_cut, frame_kf, sim = _is_hard_cut(path, kf_time, prev_time, w, h)
         if is_cut:
+            if frame_kf.mean() < 20:
+                continue  # skip dark scene — pHash unreliable
             return kf_time, frame_kf
     return None, None
+
+
+def _fmt_ts(t):
+    """Format seconds as h:mm:ss.mmm."""
+    h = int(t // 3600)
+    m = int((t % 3600) // 60)
+    s = t % 60
+    return f"{h}:{m:02d}:{s:06.3f}"
 
 
 def _crop_letterbox(frame, frame_ar, target_ar):
@@ -282,20 +292,20 @@ def refine_offset_visual(v1_path, v2_path, offset, speed, dur1, dur2,
             if match_sim > 0.8:
                 if progress_cb:
                     progress_cb("status",
-                                f"Visual fine-tune: V1 {v1_time:.1f}s "
-                                f"\u2194 V2 {kf_time:.1f}s "
+                                f"Visual fine-tune: V1 {_fmt_ts(v1_time)} "
+                                f"\u2194 V2 {_fmt_ts(kf_time)} "
                                 f"p={match_sim:.3f} \u2713")
                 return v1_time - kf_time
         if progress_cb:
             if n_cuts == 0:
                 progress_cb("status",
-                            f"Visual fine-tune: V1 {v1_time:.1f}s "
+                            f"Visual fine-tune: V1 {_fmt_ts(v1_time)} "
                             f"\u2194 V2 no cuts found in "
                             f"{len(v2_keyframes)} keyframes \u2717")
             else:
                 progress_cb("status",
-                            f"Visual fine-tune: V1 {v1_time:.1f}s "
-                            f"\u2194 V2 best={best_kf:.1f}s "
+                            f"Visual fine-tune: V1 {_fmt_ts(v1_time)} "
+                            f"\u2194 V2 best={_fmt_ts(best_kf)} "
                             f"p={best_sim:.3f} \u2717")
         return None
 
@@ -313,7 +323,7 @@ def refine_offset_visual(v1_path, v2_path, offset, speed, dur1, dur2,
         if progress_cb:
             progress_cb("status",
                         f"Visual fine-tune: matching V1 cut at "
-                        f"{v1_time:.1f}s in V2...")
+                        f"{_fmt_ts(v1_time)} in V2...")
         matched = _match_in_v2(v1_time, v1_frame)
         if matched is not None:
             all_offsets.append(matched)
