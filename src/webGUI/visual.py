@@ -299,16 +299,15 @@ def refine_offset_visual(v1_path, v2_path, offset, speed, dur1, dur2,
                             f"p={best_sim:.3f} \u2717")
         return None
 
-    # Interleaved: find V1 cut → match in V2 → next location
-    # Require 3 consecutive cuts with offsets agreeing within ±2 frames
+    # Find 3 matching cuts with agreeing offsets (±2 frames tolerance)
     FRAME_TOL = 0.083  # ±2 frames at 24fps
-    consec_offsets = []
+    all_offsets = []
+    agreeing = None
     for loc in locations:
         if cancel and hasattr(cancel, 'check'):
             cancel.check()
         result = _find_v1_cut(loc)
         if not result or result[0] is None:
-            consec_offsets = []
             continue
         v1_time, v1_frame = result
         if progress_cb:
@@ -317,22 +316,21 @@ def refine_offset_visual(v1_path, v2_path, offset, speed, dur1, dur2,
                         f"{v1_time:.1f}s in V2...")
         matched = _match_in_v2(v1_time, v1_frame)
         if matched is not None:
-            if consec_offsets and abs(matched - consec_offsets[0]) > FRAME_TOL:
-                consec_offsets = []
-            consec_offsets.append(matched)
-            if len(consec_offsets) >= 3:
+            all_offsets.append(matched)
+            group = [o for o in all_offsets
+                     if abs(o - matched) <= FRAME_TOL]
+            if len(group) >= 3:
+                agreeing = group
                 break
-        else:
-            consec_offsets = []
 
-    if len(consec_offsets) < 3:
+    if agreeing is None:
         if progress_cb:
             progress_cb("status",
-                        f"Visual fine-tune: only {len(consec_offsets)} "
-                        f"consecutive cuts matched, keeping coarse offset")
+                        f"Visual fine-tune: only {len(all_offsets)} cuts "
+                        f"matched, no 3 agree, keeping coarse offset")
         return None
 
-    refined = float(np.median(consec_offsets))
+    refined = float(np.median(agreeing))
 
     if abs(refined) > 5.0:
         if progress_cb:
@@ -343,7 +341,7 @@ def refine_offset_visual(v1_path, v2_path, offset, speed, dur1, dur2,
 
     if progress_cb:
         progress_cb("status",
-                    f"Visual fine-tune: {len(consec_offsets)} cuts matched, "
+                    f"Visual fine-tune: {len(agreeing)} cuts matched, "
                     f"offset {offset:.3f}s -> {refined:.3f}s")
 
     return refined
