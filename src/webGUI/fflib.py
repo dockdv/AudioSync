@@ -494,15 +494,18 @@ FRAME_W, FRAME_H = 160, 120
 
 
 def _tonemap_vf(width, height):
-    """Build a -vf filter chain that tone-maps HDR→SDR then scales to gray."""
-    return (f"zscale=t=linear:npl=100,tonemap=hable,"
-            f"zscale=t=bt709:m=bt709,format=gray,"
-            f"scale={width}:{height}")
+    """Build a -vf filter chain that produces a grayscale frame at WxH.
+
+    Plain format conversion (no tonemap): for HDR sources this takes the
+    encoded Y channel, which is monotonic and good enough for pHash/MSE
+    comparison; for SDR it's just luma. Avoids zscale's color-metadata
+    requirements that fail on files with missing/unknown VUI."""
+    return f"format=gray,scale={width}:{height}"
 
 
 def extract_frame(handle, timestamp, width=FRAME_W, height=FRAME_H):
     ff = _ffmpeg
-    cmd = [ff, "-v", "quiet",
+    cmd = [ff, "-v", "error",
            "-ss", f"{timestamp:.3f}",
            "-i", handle,
            "-vframes", "1",
@@ -577,7 +580,7 @@ def extract_frame_full(handle, timestamp, width, height):
     Returns numpy array of shape (H, W) with dtype float32, or None.
     """
     ff = _ffmpeg
-    cmd = [ff, "-v", "quiet",
+    cmd = [ff, "-v", "error",
            "-ss", f"{timestamp:.3f}",
            "-i", handle,
            "-vframes", "1",
