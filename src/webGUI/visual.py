@@ -146,14 +146,14 @@ def refine_boundary_visual(v1_path, v2_path, segments, speed,
     return refined
 
 
-def _is_hard_cut(path, kf_time, prev_time, w, h, mse_threshold=500, hdr=False):
+def _is_hard_cut(path, kf_time, prev_time, w, h, mse_threshold=500):
     """Check if a keyframe is a hard cut by comparing to previous frame.
 
     Returns (is_cut, keyframe_frame, mse).
     Uses MSE (mean squared error) for reliable cut detection.
     """
-    frame_kf = fflib.extract_frame_full(path, kf_time, w, h, hdr=hdr)
-    frame_prev = fflib.extract_frame_full(path, prev_time, w, h, hdr=hdr)
+    frame_kf = fflib.extract_frame_full(path, kf_time, w, h)
+    frame_prev = fflib.extract_frame_full(path, prev_time, w, h)
 
     if frame_kf is None or frame_prev is None:
         return False, None, -1.0
@@ -162,7 +162,7 @@ def _is_hard_cut(path, kf_time, prev_time, w, h, mse_threshold=500, hdr=False):
 
 
 def _find_hard_cut_from(keyframes, idx, path, w, h, frame_interval,
-                        cancel=None, hdr=False):
+                        cancel=None):
     """Walk keyframes starting at idx until a hard cut is found.
 
     Returns (keyframe_time, keyframe_frame) or (None, None).
@@ -172,11 +172,20 @@ def _find_hard_cut_from(keyframes, idx, path, w, h, frame_interval,
             cancel.check()
         kf_time = keyframes[i]
         prev_time = max(0.0, kf_time - frame_interval)
-        is_cut, frame_kf, sim = _is_hard_cut(path, kf_time, prev_time, w, h,
-                                              hdr=hdr)
+        is_cut, frame_kf, sim = _is_hard_cut(path, kf_time, prev_time, w, h)
         if is_cut:
             return kf_time, frame_kf
     return None, None
+
+
+def _crop_letterbox(frame, frame_ar, target_ar):
+    """Crop letterbox/pillarbox bars to match the wider aspect ratio."""
+    if frame_ar >= target_ar:
+        return frame
+    h, w = frame.shape
+    new_h = int(w / target_ar)
+    margin = (h - new_h) // 2
+    return frame[margin:margin + new_h, :]
 
 
 def refine_offset_visual(v1_path, v2_path, offset, speed, dur1, dur2,
@@ -193,13 +202,10 @@ def refine_offset_visual(v1_path, v2_path, offset, speed, dur1, dur2,
     if progress_cb:
         progress_cb("status", "Visual fine-tune: finding V1 hard cuts...")
 
-    # Get V1 video resolution and HDR status
+    # Get V1 video resolution
     v1_w, v1_h = fflib.get_video_resolution(v1_path)
     if not v1_w or not v1_h:
         return None
-    v1_hdr = fflib.is_hdr(v1_path)
-    if progress_cb:
-        progress_cb("status", f"Visual fine-tune: V1 HDR={v1_hdr}")
 
     # Define 10 equally spaced locations
     n_locations = 10
@@ -223,15 +229,17 @@ def refine_offset_visual(v1_path, v2_path, offset, speed, dur1, dur2,
                 frame_interval = min(frame_interval, min(pos_gaps))
         return _find_hard_cut_from(keyframes, 0, v1_path,
                                    v1_w, v1_h, frame_interval,
-                                   cancel=cancel, hdr=v1_hdr)
+                                   cancel=cancel)
 
-    # Get V2 resolution and HDR status
+    # Get V2 resolution
     v2_w, v2_h = fflib.get_video_resolution(v2_path)
     if not v2_w or not v2_h:
         return None
-    v2_hdr = fflib.is_hdr(v2_path)
-    if progress_cb:
-        progress_cb("status", f"Visual fine-tune: V2 HDR={v2_hdr}")
+
+    # Compute aspect ratios for letterbox cropping
+    v1_ar = v1_w / v1_h
+    v2_ar = v2_w / v2_h
+    wider_ar = max(v1_ar, v2_ar)
 
     def _match_in_v2(v1_time, v1_frame):
         expected_v2 = (v1_time - offset) / speed
@@ -261,11 +269,13 @@ def refine_offset_visual(v1_path, v2_path, offset, speed, dur1, dur2,
                 cancel.check()
             prev_time = max(0.0, kf_time - v2_frame_interval)
             is_cut, v2_frame, sim = _is_hard_cut(
-                v2_path, kf_time, prev_time, v2_w, v2_h, hdr=v2_hdr)
+                v2_path, kf_time, prev_time, v2_w, v2_h)
             if not is_cut:
                 continue
             n_cuts += 1
-            match_sim = frame_similarity(v1_frame, v2_frame)
+            v1_crop = _crop_letterbox(v1_frame, v1_ar, wider_ar)
+            v2_crop = _crop_letterbox(v2_frame, v2_ar, wider_ar)
+            match_sim = frame_similarity(v1_crop, v2_crop)
             if match_sim > best_sim:
                 best_sim = match_sim
                 best_kf = kf_time
@@ -290,14 +300,15 @@ def refine_offset_visual(v1_path, v2_path, offset, speed, dur1, dur2,
         return None
 
     # Interleaved: find V1 cut → match in V2 → next location
-    matched_offsets = []
-    consecutive = 0
+    # Require 3 consecutive cuts with offsets agreeing within ±2 frames
+    FRAME_TOL = 0.083  # ±2 frames at 24fps
+    consec_offsets = []
     for loc in locations:
         if cancel and hasattr(cancel, 'check'):
             cancel.check()
         result = _find_v1_cut(loc)
         if not result or result[0] is None:
-            consecutive = 0
+            consec_offsets = []
             continue
         v1_time, v1_frame = result
         if progress_cb:
@@ -306,33 +317,33 @@ def refine_offset_visual(v1_path, v2_path, offset, speed, dur1, dur2,
                         f"{v1_time:.1f}s in V2...")
         matched = _match_in_v2(v1_time, v1_frame)
         if matched is not None:
-            matched_offsets.append(matched)
-            consecutive += 1
-            if consecutive >= 2:
+            if consec_offsets and abs(matched - consec_offsets[0]) > FRAME_TOL:
+                consec_offsets = []
+            consec_offsets.append(matched)
+            if len(consec_offsets) >= 3:
                 break
         else:
-            consecutive = 0
+            consec_offsets = []
 
-    if len(matched_offsets) < 2:
+    if len(consec_offsets) < 3:
         if progress_cb:
             progress_cb("status",
-                        f"Visual fine-tune: only {len(matched_offsets)} cuts "
-                        f"matched, keeping coarse offset")
+                        f"Visual fine-tune: only {len(consec_offsets)} "
+                        f"consecutive cuts matched, keeping coarse offset")
         return None
 
-    refined = float(np.median(matched_offsets))
+    refined = float(np.median(consec_offsets))
 
-    # Refined offset must be closer to zero than audio offset
-    if abs(refined) > abs(offset):
+    if abs(refined) > 5.0:
         if progress_cb:
             progress_cb("status",
-                        f"Visual fine-tune: |{refined:.3f}s| > |{offset:.3f}s|, "
+                        f"Visual fine-tune: |{refined:.3f}s| > 5.0s, "
                         f"discarding")
         return None
 
     if progress_cb:
         progress_cb("status",
-                    f"Visual fine-tune: {len(matched_offsets)} cuts matched, "
+                    f"Visual fine-tune: {len(consec_offsets)} cuts matched, "
                     f"offset {offset:.3f}s -> {refined:.3f}s")
 
     return refined

@@ -42,7 +42,7 @@ AudioSync uses a multi-stage pipeline to automatically determine the speed ratio
 
 7. **Content Break Detection** — A sliding-window cross-correlation scan across the full file detects content breaks (e.g., censored scenes, inserted/removed segments). Each detected segment gets its own offset, and the merge produces a piecewise-aligned output using FFmpeg's concat filter. Supports arbitrary numbers of segments with a minimum segment length of 60 seconds.
 
-8. **Visual Fine-Tune** — When both files have video, the offset is refined by detecting hard cuts (scene changes) in V1 using MSE on keyframe pairs, then matching each cut in V2 using perceptual hashing (pHash). The median of matched offsets replaces the audio-only estimate when it improves alignment.
+8. **Visual Fine-Tune** — When both files have video, the offset is refined by detecting hard cuts (scene changes) in V1 using MSE on keyframe pairs, then matching each cut in V2 using perceptual hashing (pHash). Frames are tone-mapped to BT.709 for HDR/SDR compatibility and letterbox-cropped to match aspect ratios before comparison. Requires 3 consecutive cuts with agreeing offsets (±2 frames tolerance) to accept the refinement.
 
 ### Vocal Filter (Cross-Language Mode)
 

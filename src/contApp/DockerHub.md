@@ -28,7 +28,7 @@ AudioSync uses a multi-stage alignment pipeline:
 3. **RANSAC Linear Fit** — Matched fingerprint pairs are fitted to `t1 = a * t2 + b` using RANSAC to find the speed ratio and offset.
 4. **Content Break Detection** — Sliding-window cross-correlation scan detects content breaks (censored scenes, different edits) and aligns each segment independently. Supports arbitrary numbers of segments.
 5. **Vocal Filter** — Optional in-memory band-reject filter (removes 300Hz-3kHz) for cross-language matching where dialogue differs but music/effects are shared.
-6. **Visual Fine-Tune** — When both files have video, the offset is refined by detecting hard cuts (scene changes) in V1 using MSE on keyframe pairs, then matching each cut in V2 using perceptual hashing (pHash). The median of matched offsets replaces the audio-only estimate when it improves alignment.
+6. **Visual Fine-Tune** — When both files have video, the offset is refined by detecting hard cuts (scene changes) in V1 using MSE on keyframe pairs, then matching each cut in V2 using perceptual hashing (pHash). Frames are tone-mapped to BT.709 for HDR/SDR compatibility and letterbox-cropped to match aspect ratios before comparison. Requires 3 consecutive cuts with agreeing offsets (±2 frames tolerance) to accept the refinement.
 
 ## Screenshots
 
