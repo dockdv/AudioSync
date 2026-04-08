@@ -95,8 +95,8 @@ public static class MergeEndpoints
                 store.UpdateTask(sid, job.Id, status: JobStatus.Done,
                     result: new { elapsed = $"{mins}m {secs}s", output = build.OutPath });
             }
-            catch (OperationCanceledException) { store.UpdateTask(sid, job!.Id, status: JobStatus.Cancelled, error: "Cancelled"); }
-            catch (CancelledException) { store.UpdateTask(sid, job!.Id, status: JobStatus.Cancelled, error: "Cancelled"); }
+            catch (OperationCanceledException) { store.AppendLog(sid, "Task cancelled."); store.UpdateTask(sid, job!.Id, status: JobStatus.Cancelled, error: "Cancelled"); }
+            catch (CancelledException) { store.AppendLog(sid, "Task cancelled."); store.UpdateTask(sid, job!.Id, status: JobStatus.Cancelled, error: "Cancelled"); }
             catch (Exception ex) { store.UpdateTask(sid, job!.Id, status: JobStatus.Error, error: ex.Message); }
             finally { store.EnsureTaskFinished(sid, job!.Id); }
         });
