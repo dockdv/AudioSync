@@ -54,9 +54,29 @@ jobs:
           git push origin main
           git push origin "${{ github.event.inputs.version }}" --force
 
-  build-exe:
+  build:
     needs: prepare
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+            asset: AudioSync-win-x64.exe
+            bin: AudioSync.Web.exe
+          - os: ubuntu-latest
+            rid: linux-x64
+            asset: AudioSync-linux-x64
+            bin: AudioSync.Web
+          - os: macos-latest
+            rid: osx-arm64
+            asset: AudioSync-osx-arm64
+            bin: AudioSync.Web
+          - os: macos-13
+            rid: osx-x64
+            asset: AudioSync-osx-x64
+            bin: AudioSync.Web
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: read
     steps:
@@ -71,37 +91,40 @@ jobs:
       - name: Restore
         run: dotnet restore src/webGUI/AudioSync.slnx
 
-      - name: Publish single-file Windows exe
+      - name: Publish single-file binary
+        shell: bash
         run: |
-          dotnet publish src/webGUI/src/AudioSync.Web/AudioSync.Web.csproj `
-            -c Release `
-            -r win-x64 `
-            --self-contained `
-            -p:PublishSingleFile=true `
-            -p:IncludeNativeLibrariesForSelfExtract=true `
-            -p:DebugType=None `
-            -p:DebugSymbols=false `
+          dotnet publish src/webGUI/src/AudioSync.Web/AudioSync.Web.csproj \
+            -c Release \
+            -r ${{ matrix.rid }} \
+            --self-contained \
+            -p:PublishSingleFile=true \
+            -p:IncludeNativeLibrariesForSelfExtract=true \
+            -p:DebugType=None \
+            -p:DebugSymbols=false \
             -o dist
 
       - name: Stage release artifact
+        shell: bash
         run: |
-          mkdir release
-          copy dist\AudioSync.Web.exe release\AudioSync.exe
+          mkdir -p release
+          cp "dist/${{ matrix.bin }}" "release/${{ matrix.asset }}"
 
       - uses: actions/upload-artifact@v6
         with:
-          name: AudioSync-exe
-          path: release/AudioSync.exe
+          name: ${{ matrix.asset }}
+          path: release/${{ matrix.asset }}
 
   publish:
-    needs: build-exe
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v7
         with:
-          name: AudioSync-exe
+          path: artifacts
+          merge-multiple: true
 
       - name: Create GitHub Release
         env:
@@ -109,6 +132,9 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           gh release create "${{ github.event.inputs.version }}" \
-            AudioSync.exe \
+            artifacts/AudioSync-win-x64.exe \
+            artifacts/AudioSync-linux-x64 \
+            artifacts/AudioSync-osx-arm64 \
+            artifacts/AudioSync-osx-x64 \
             --title "${{ github.event.inputs.version }}" \
             --generate-notes
