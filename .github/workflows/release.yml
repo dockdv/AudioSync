@@ -111,8 +111,9 @@ jobs:
           if [[ "${{ runner.os }}" == "macOS" ]]; then
             VER="${{ github.event.inputs.version }}"
             VER="${VER#v}"
-            APP="AudioSync.app"
-            rm -rf "$APP"
+            DMGROOT="dmgroot"
+            APP="$DMGROOT/AudioSync.app"
+            rm -rf "$DMGROOT"
             mkdir -p "$APP/Contents/MacOS"
             cp "dist/${{ matrix.bin }}" "$APP/Contents/MacOS/AudioSync"
             chmod +x "$APP/Contents/MacOS/AudioSync"
@@ -131,7 +132,13 @@ jobs:
           </dict>
           </plist>
           PLIST
-            hdiutil create -volname AudioSync -srcfolder "$APP" -size 500m -fs HFS+ -ov -format UDZO "release/${{ matrix.asset }}"
+            # Ad-hoc sign the inner binary and the bundle so Gatekeeper
+            # treats it as unsigned-but-intact rather than "damaged".
+            codesign --force --sign - "$APP/Contents/MacOS/AudioSync"
+            codesign --force --sign - "$APP"
+            # Drag-to-Applications shortcut inside the DMG.
+            ln -s /Applications "$DMGROOT/Applications"
+            hdiutil create -volname AudioSync -srcfolder "$DMGROOT" -size 500m -fs HFS+ -ov -format UDZO "release/${{ matrix.asset }}"
           else
             cp "dist/${{ matrix.bin }}" "release/${{ matrix.asset }}"
           fi
