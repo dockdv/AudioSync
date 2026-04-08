@@ -1,0 +1,114 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. v1.2.0)"
+        required: true
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - name: Validate version format
+        run: |
+          if [[ ! "${{ github.event.inputs.version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "ERROR: Version must match vX.Y.Z (e.g. v1.2.0)"
+            exit 1
+          fi
+
+      - name: Check release does not already exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "${{ github.event.inputs.version }}" &>/dev/null; then
+            echo "ERROR: Release ${{ github.event.inputs.version }} already exists"
+            exit 1
+          fi
+
+      - name: Update version in csproj
+        run: |
+          VER="${{ github.event.inputs.version }}"
+          VER="${VER#v}"
+          CSPROJ=src/webGUI/src/AudioSync.Web/AudioSync.Web.csproj
+          if grep -q '<Version>' "$CSPROJ"; then
+            sed -i "s|<Version>.*</Version>|<Version>${VER}</Version>|" "$CSPROJ"
+          else
+            sed -i "s|</PropertyGroup>|  <Version>${VER}</Version>\n  </PropertyGroup>|" "$CSPROJ"
+          fi
+
+      - name: Commit and tag
+        run: |
+          git config user.name "dockdv"
+          git config user.email "dockdv@users.noreply.github.com"
+          git add src/webGUI/src/AudioSync.Web/AudioSync.Web.csproj
+          git diff --cached --quiet || git commit -m "release: ${{ github.event.inputs.version }}"
+          git tag -f "${{ github.event.inputs.version }}"
+          git push origin main
+          git push origin "${{ github.event.inputs.version }}" --force
+
+  build-exe:
+    needs: prepare
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.version }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore src/webGUI/AudioSync.slnx
+
+      - name: Publish single-file Windows exe
+        run: |
+          dotnet publish src/webGUI/src/AudioSync.Web/AudioSync.Web.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:DebugType=None `
+            -p:DebugSymbols=false `
+            -o dist
+
+      - name: Stage release artifact
+        run: |
+          mkdir release
+          copy dist\AudioSync.Web.exe release\AudioSync.exe
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: AudioSync-exe
+          path: release/AudioSync.exe
+
+  publish:
+    needs: build-exe
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: AudioSync-exe
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "${{ github.event.inputs.version }}" \
+            AudioSync.exe \
+            --title "${{ github.event.inputs.version }}" \
+            --generate-notes

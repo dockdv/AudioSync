@@ -1,0 +1,29 @@
+# Git
+.git
+.gitignore
+.easy-git
+
+# Python caches
+__pycache__
+*.pyc
+
+# Windows binaries
+*.exe
+*.bat
+*.cmd
+
+# Bundled FFmpeg/FFprobe (container installs via apt)
+src/webGUI/ffmpeg
+src/webGUI/ffprobe
+
+# Virtual environment
+.venv/
+
+# IDE / editor
+.vscode
+
+# Uploads (don't bake in)
+src/webGUI/uploads/
+
+# Container build files (not needed inside image)
+src/contApp/

@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Audio Sync &amp; Merge</title>
+<link rel="stylesheet" href="/css/style.css">
+<style>
+.merge-h28 { height: 28px; box-sizing: border-box; padding-top: 0; padding-bottom: 0; }
+.merge-h28.progress-bar { line-height: 28px; }
+</style>
+</head>
+<body>
+
+<div class="app-layout">
+<div class="sidebar">
+    <div class="sidebar-title">Sessions</div>
+    <div id="session-list"></div>
+</div>
+<div class="app">
+    <div id="app-title" style="font-size:15px;font-weight:700;color:var(--ac);margin-bottom:8px">Audio Sync &amp; Merge</div>
+    <div class="file-inputs">
+        <div class="file-row">
+            <span class="label" style="color:var(--dim)">ffmpeg</span>
+            <span class="text-mono text-sm" id="info-ffmpeg" style="flex:1">loading…</span>
+        </div>
+        <div class="file-row">
+            <span class="label" style="color:var(--dim)">ffprobe</span>
+            <span class="text-mono text-sm" id="info-ffprobe" style="flex:1">loading…</span>
+        </div>
+        <div class="file-row">
+            <span class="label" style="color:var(--dim)">mkvmerge</span>
+            <span class="text-mono text-sm" id="info-mkvmerge" style="flex:1">loading…</span>
+        </div>
+        <div class="file-row">
+            <span class="label" style="color:var(--dim)">hwaccel</span>
+            <span class="text-mono text-sm" id="info-hwaccel" style="flex:1">loading…</span>
+        </div>
+    </div>
+
+    <div class="file-inputs">
+        <div class="file-row">
+            <span class="label">Video 1</span>
+            <input type="text" id="v1-path-input" placeholder="Primary video (keeps video + all audio)...">
+            <button onclick="browseServer(1)">Browse...</button>
+            <button class="btn-accent btn-sm" onclick="loadVideo(1)">Load</button>
+            <button class="btn-sm" onclick="testInterleave()">Test</button>
+        </div>
+        <div class="file-info" id="v1-file-info"></div>
+        <div class="file-row">
+            <span class="label">Video 2</span>
+            <input type="text" id="v2-path-input" placeholder="Audio source video...">
+            <button onclick="browseServer(2)">Browse...</button>
+            <button class="btn-accent btn-sm" onclick="loadVideo(2)">Load</button>
+            <button class="btn-sm" onclick="clearVideo2()">Clear</button>
+        </div>
+        <div class="file-info" id="v2-file-info"></div>
+        <div class="file-row">
+            <span class="label">Output</span>
+            <input type="text" id="out-path-input" placeholder="Output path (auto-generated from Video 1)...">
+            <button onclick="browseOutputDir()">Browse...</button>
+        </div>
+    </div>
+
+    <div class="grid">
+
+        <div class="panel">
+            <div class="panel-title">Video 1 Streams (select for output)</div>
+            <div class="panel-body">
+                <div id="v1-tracks"><span class="text-dim text-sm">Load Video 1...</span></div>
+                <button class="btn-blue btn-sm mt-4" onclick="openV1MetadataEditor()">Edit Titles...</button>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-title">Video 2 (select tracks to merge)</div>
+            <div class="panel-body">
+                <div id="v2-tracks"><span class="text-dim text-sm">Load Video 2...</span></div>
+                <button class="btn-blue btn-sm mt-4" onclick="openV2MetadataEditor()">Edit Titles...</button>
+            </div>
+        </div>
+
+        <div class="panel panel-disabled" id="panel-align">
+            <div class="panel-title">Auto Alignment</div>
+            <div class="panel-body">
+                <div class="row">
+                    <label class="text-sm">V1 sync track:</label>
+                    <select id="v1-sync-track" style="flex:1" onchange="saveUIState()"><option value="0">0: (default)</option></select>
+                </div>
+                <div class="row">
+                    <label class="text-sm">V2 sync track:</label>
+                    <select id="v2-sync-track" style="flex:1" onchange="saveUIState()"><option value="0">0: (default)</option></select>
+                </div>
+                <div class="text-dim text-sm mt-4">Pick tracks that share common audio</div>
+                <div class="row mt-4" style="gap:12px;flex-wrap:wrap">
+                    <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
+                        <input type="checkbox" id="vocal-filter-cb" checked onchange="saveUIState()"> Filter vocals (cross-language)
+                    </label>
+                    <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
+                        <input type="checkbox" id="measure-lufs-cb" onchange="saveUIState()"> Measure loudness
+                    </label>
+                </div>
+                <div class="row mt-4">
+                    <button class="btn-green merge-h28" id="align-btn" onclick="runAlign()" style="flex:1">Auto-Align</button>
+                </div>
+                <div class="progress-bar merge-h28" id="align-progress"><div class="fill"></div><span class="pct"></span></div>
+            </div>
+        </div>
+
+        <div class="panel panel-disabled" id="panel-override">
+            <div class="panel-title">Manual Override / Output</div>
+            <div class="panel-body">
+                <div class="row">
+                    <label class="text-sm">Atempo:</label>
+                    <input type="text" id="atempo-input" value="1.000000" style="width:130px">
+                </div>
+                <div class="row" id="global-offset-row">
+                    <label class="text-sm">Offset (s):</label>
+                    <input type="text" id="offset-input" value="0.000" style="width:130px">
+                </div>
+                <div id="segment-overrides"></div>
+                <div class="row mt-4">
+                    <button class="btn-blue merge-h28" onclick="openDefaultAudioEditor()" style="flex:1">Default Audio Track...</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel panel-disabled" id="panel-results">
+            <div class="panel-title">Results</div>
+            <div class="panel-body">
+                <div class="result-row"><span class="rlabel">Mode</span><span class="value" id="r-mode">-</span></div>
+                <div class="result-row"><span class="rlabel">Atempo</span><span class="value" id="r-atempo">-</span></div>
+                <div class="result-row"><span class="rlabel">Offset</span><span class="value" id="r-offset">-</span></div>
+                <div class="result-row"><span class="rlabel">Inliers</span><span class="value" id="r-inliers">-</span></div>
+                <div class="result-row"><span class="rlabel">Fit</span><span class="value" id="r-fit">-</span></div>
+                <div class="result-row"><span class="rlabel">Precision</span><span class="value" id="r-precision">-</span></div>
+                <div class="result-row"><span class="rlabel">Visual</span><span class="value" id="r-visual">-</span></div>
+                <textarea class="results-box mt-4" id="results-detail" readonly></textarea>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-title" id="merge-panel-title">Merge</div>
+            <div class="panel-body">
+                <div class="row" style="gap:12px;margin-bottom:6px">
+                    <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
+                        <input type="radio" name="container-fmt" value="mkv" checked onchange="onContainerChange()"> .mkv
+                    </label>
+                    <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
+                        <input type="radio" name="container-fmt" value="keep" onchange="onContainerChange()"> Keep original
+                    </label>
+                </div>
+                <div class="row" style="gap:12px;margin-bottom:6px">
+                    <label id="gain-match-label" style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer;opacity:0.5" title="Loudness must be measured first!">
+                        <input type="checkbox" id="gain-match-cb" disabled onchange="saveUIState()"> Match V2 loudness to V1
+                    </label>
+                </div>
+                <div class="row">
+                    <button class="btn-blue merge-h28" id="samples-btn" onclick="runCreateSample()" style="flex:1">Create Sample</button>
+                </div>
+                <div class="row">
+                    <button class="btn-green merge-h28" id="merge-btn" onclick="runMerge()" style="flex:1">Run Merge</button>
+                </div>
+                <div class="progress-bar merge-h28" id="merge-progress" style="margin-bottom:30px"><div class="fill"></div><span class="pct"></span></div>
+                <div class="row">
+                    <button class="btn-red merge-h28 hidden" id="global-stop" onclick="cancelRunningTask()" style="flex:1">Stop</button>
+                </div>
+                <button class="btn-red merge-h28 mt-4" id="close-session-btn" onclick="closeSession()" style="width:100%">Close Session</button>
+            </div>
+        </div>
+
+        <div class="panel full">
+            <div class="panel-title">Logs</div>
+            <div class="panel-body">
+                <textarea class="log-box" id="log-box" readonly></textarea>
+            </div>
+        </div>
+
+    </div>
+</div>
+</div>
+
+<script>
+// Boot: fetch /api/info + /api/languages, then load app.js.
+// Sets ALL_LANGUAGES + LANG_NAMES globally so app.js sees the same shape
+// as the Jinja template provided in the Python original.
+let ALL_LANGUAGES = [];
+let LANG_NAMES = {};
+(async function boot() {
+    try {
+        const [infoR, langR] = await Promise.all([
+            fetch('/api/info').then(r => r.json()),
+            fetch('/api/languages').then(r => r.json()),
+        ]);
+        document.getElementById('app-title').textContent = infoR.app_title || 'Audio Sync & Merge';
+        document.title = infoR.app_title || 'Audio Sync & Merge';
+        function setTool(id, path, ver, ok) {
+            const el = document.getElementById(id);
+            el.style.color = ok ? 'var(--green)' : 'var(--err)';
+            el.textContent = (path || 'not found') + (ver ? ' — ' + ver : '');
+        }
+        setTool('info-ffmpeg', infoR.ffmpeg_path, infoR.ffmpeg_version, !!infoR.ffmpeg_path);
+        setTool('info-ffprobe', infoR.ffprobe_path, infoR.ffprobe_version, !!infoR.ffprobe_path);
+        setTool('info-mkvmerge', infoR.mkvmerge_path, infoR.mkvmerge_version, !!infoR.mkvmerge_path);
+        const hw = document.getElementById('info-hwaccel');
+        hw.style.color = (infoR.hwaccel && infoR.hwaccel !== 'none') ? 'var(--green)' : 'var(--dim)';
+        hw.textContent = infoR.hwaccel || 'none';
+
+        ALL_LANGUAGES = langR.all_languages || [];
+        LANG_NAMES = langR.lang_names || {};
+        window.ALL_LANGUAGES = ALL_LANGUAGES;
+        window.LANG_NAMES = LANG_NAMES;
+    } catch (e) {
+        console.error('Boot info fetch failed:', e);
+    }
+    const s = document.createElement('script');
+    s.src = '/js/app.js';
+    document.body.appendChild(s);
+})();
+</script>
+</body>
+</html>

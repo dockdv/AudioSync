@@ -1,0 +1,10 @@
+services:
+  audiosync:
+    build:
+      context: ../..
+      dockerfile: src/contApp/Dockerfile
+    ports:
+      - "5000:5000"
+    volumes:
+      - /videos:/videos
+    restart: unless-stopped

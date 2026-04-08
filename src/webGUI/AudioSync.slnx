@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AudioSync.Core/AudioSync.Core.csproj" />
+    <Project Path="src/AudioSync.Web/AudioSync.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AudioSync.Core.Tests/AudioSync.Core.Tests.csproj" />
+  </Folder>
+</Solution>
