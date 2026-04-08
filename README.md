@@ -76,6 +76,28 @@ dotnet run --project src/AudioSync.Web
 
 Then open http://localhost:5000.
 
+## Docker
+
+Pre-built Linux image: [`dockdv/audiosync` on Docker Hub](https://hub.docker.com/r/dockdv/audiosync).
+
+```yaml
+services:
+  audiosync:
+    image: dockdv/audiosync:latest
+    ports:
+      - 5000:5000
+    volumes:
+      - /path/to/videos:/videos
+      # - /usr/local/bin/ffmpeg:/usr/local/bin/ffmpeg:ro
+      # - /usr/local/bin/ffprobe:/usr/local/bin/ffprobe:ro
+    environment:
+      # - FFMPEG_PATH=/usr/local/bin/ffmpeg
+      # - FFPROBE_PATH=/usr/local/bin/ffprobe
+    restart: unless-stopped
+```
+
+Then open http://localhost:5000.
+
 ## Publish (single-file Windows executable)
 
 ```bash
