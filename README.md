@@ -115,7 +115,9 @@ dotnet publish src/AudioSync.Web -c Release -r win-x64 --self-contained -p:Publi
 
 Drop `ffmpeg.exe`, `ffprobe.exe`, `mkvmerge.exe` next to the produced `AudioSync.Web.exe`.
 
-> **Note:** Releases **before v1.1.0** are Python-based; **v1.1.0 and later** are .NET-based.
+## Note
+
+Releases **before v1.1.0** are Python-based; **v1.1.0 and later** are .NET-based.
 
 ## License
 
