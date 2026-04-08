@@ -4,10 +4,10 @@ using System.Text.RegularExpressions;
 
 namespace AudioSync.Core.Tooling;
 
-/// <summary>
-/// Mirror of fflib._run() — wraps Process with cancellation, optional timeout,
-/// stderr capture, and ffmpeg time= progress parsing.
-/// </summary>
+
+
+
+
 public sealed class ProcessRunner : IProcessRunner
 {
     private static readonly Regex TimeRegex =
@@ -156,7 +156,7 @@ public sealed class ProcessRunner : IProcessRunner
                 options.StderrLineCallback?.Invoke(line);
             }
         }
-        catch { /* swallow on cancel */ }
+        catch {  }
     }
 
     private static async Task ReadStderrWithProgress(

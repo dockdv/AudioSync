@@ -5,11 +5,11 @@ using AudioSync.Core.Tooling;
 
 namespace AudioSync.Core.Merging;
 
-/// <summary>
-/// Mirror of mkvmerge.py — wraps the mkvmerge CLI with --gui-mode progress parsing.
-/// Used as the final pass when output is .mkv (preserves the 3-pass PGS workaround
-/// inherited from the Python).
-/// </summary>
+
+
+
+
+
 public sealed class MkvMerger
 {
     private static readonly Regex ProgressRegex =
@@ -47,7 +47,7 @@ public sealed class MkvMerger
             cmd.Add($"parts:00:00:00.000-{h:D2}:{m:D2}:{s.ToString("00.000", CultureInfo.InvariantCulture)}");
         }
 
-        // V1 video tracks
+        
         if (ctx.V1VidTids.Count > 0)
         {
             cmd.Add("--video-tracks"); cmd.Add(string.Join(",", ctx.V1VidTids));
@@ -74,7 +74,7 @@ public sealed class MkvMerger
 
         if (!ctx.V1HasAttachments) cmd.Add("--no-attachments");
 
-        // V1 audio metadata + default flag
+        
         for (int srcIdx = 0; srcIdx < ctx.V1AudTids.Count; srcIdx++)
         {
             int tid = ctx.V1AudTids[srcIdx];
@@ -87,7 +87,7 @@ public sealed class MkvMerger
             }
         }
 
-        // V1 sub metadata
+        
         if (ctx.V1SubMetadata is not null)
         {
             for (int i = 0; i < ctx.V1SubTids.Count; i++)
@@ -176,7 +176,7 @@ public sealed class MkvMerger
             cmd.Add(ctx.V2Path!);
         }
 
-        // Track order
+        
         var orderParts = new List<string>();
         foreach (var tid in ctx.V1VidTids) orderParts.Add($"0:{tid}");
         foreach (var (fid, tid) in ctx.AudioFtOrdered) orderParts.Add($"{fid}:{tid}");
@@ -189,9 +189,6 @@ public sealed class MkvMerger
         }
 
         await RunMkvmergeAsync(mkvm, cmd, progressCallback, ct).ConfigureAwait(false);
-
-        progressCallback?.Invoke("progress", "mux:100");
-        progressCallback?.Invoke("status", "Done!");
     }
 
     private static void ApplyMeta(List<string> cmd, int tid, string? language, string? title)
@@ -203,8 +200,8 @@ public sealed class MkvMerger
     private async Task RunMkvmergeAsync(string mkvm, List<string> args,
         Action<string, string>? progressCallback, CancellationToken ct)
     {
-        // mkvmerge prints --gui-mode progress on stdout, not stderr — but exit code ≥2 = error.
-        // Use the runner with progress parsing on stdout.
+        
+        
         var opts = new ProcessRunOptions
         {
             FileName = mkvm,
@@ -213,9 +210,9 @@ public sealed class MkvMerger
             ProgressCallback = progressCallback,
             ProgressPrefix = "mux",
             Timeout = null,
-            // Custom stderr handler not needed; use streaming for progress on stdout.
+            
         };
-        // Stream stdout to parse progress lines.
+        
         var sb = new System.Text.StringBuilder();
         await _runner.RunStreamingAsync(opts, async (chunk, c) =>
         {

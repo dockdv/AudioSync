@@ -1,6 +1,6 @@
 namespace AudioSync.Core.Probing;
 
-/// <summary>Mirror of probe.py LANG_NAMES / _LANG_NORMALIZE / ALL_LANGUAGES.</summary>
+
 public static class Languages
 {
     public static readonly IReadOnlyDictionary<string, string> Names = new Dictionary<string, string>
@@ -38,7 +38,7 @@ public static class Languages
         return Normalize.TryGetValue(c, out var n) ? n : c;
     }
 
-    /// <summary>("und","Undetermined") + LANG_NAMES sorted by display name.</summary>
+    
     public static IReadOnlyList<(string Code, string Name)> All { get; } = BuildAll();
 
     private static IReadOnlyList<(string, string)> BuildAll()
@@ -54,7 +54,7 @@ public static class Languages
         ".ts", ".mts", ".m2ts", ".webm",
     };
 
-    /// <summary>Mirror of probe.needs_container_change → (needsChange, lowercaseExt).</summary>
+    
     public static (bool NeedsChange, string Ext) NeedsContainerChange(string filepath)
     {
         var ext = Path.GetExtension(filepath).ToLowerInvariant();

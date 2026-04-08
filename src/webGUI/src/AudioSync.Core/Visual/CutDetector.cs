@@ -9,7 +9,7 @@ public sealed class CutDetector
     private readonly FfLib _ff;
     public CutDetector(FfLib ff) { _ff = ff; }
 
-    /// <summary>Convert raw uint8 grayscale bytes to a double[H*W] frame.</summary>
+    
     public static double[] ToFrame(byte[] bytes)
     {
         var d = new double[bytes.Length];
@@ -19,10 +19,10 @@ public sealed class CutDetector
 
     public sealed record HardCutResult(bool IsCut, double[]? Frame, double[]? PrevFrame, double Mse);
 
-    /// <summary>
-    /// Mirror of visual._is_hard_cut, plus the prev frame is returned alongside
-    /// the cut frame so callers can do prev↔prev verification without re-extracting.
-    /// </summary>
+    
+    
+    
+    
     public async Task<HardCutResult> IsHardCutAsync(
         string path, double kfTime, double prevTime, int w, int h, CancellationToken ct = default)
     {
@@ -41,10 +41,10 @@ public sealed class CutDetector
         return new HardCutResult(mse > MseThreshold, ToFrame(bKf), ToFrame(bPrev), mse);
     }
 
-    /// <summary>
-    /// Walk forward up to 50 keyframes looking for a hard cut. Returns the cut
-    /// keyframe time, its frame, and the frame immediately before the cut.
-    /// </summary>
+    
+    
+    
+    
     public async Task<(double? KfTime, double[]? Frame, double[]? PrevFrame)> FindHardCutFromAsync(
         IList<double> keyframes, int idx, string path, int w, int h,
         double frameInterval, CancellationToken ct = default)
@@ -57,7 +57,7 @@ public sealed class CutDetector
             double prev = Math.Max(0, kf - frameInterval);
             var r = await IsHardCutAsync(path, kf, prev, w, h, ct).ConfigureAwait(false);
             if (!r.IsCut || r.Frame is null) continue;
-            // Skip dark scenes (pHash unreliable)
+            
             double mean = 0;
             for (int j = 0; j < r.Frame.Length; j++) mean += r.Frame[j];
             mean /= r.Frame.Length;
@@ -67,7 +67,7 @@ public sealed class CutDetector
         return (null, null, null);
     }
 
-    /// <summary>Mirror of visual._crop_letterbox — crop to wider aspect ratio.</summary>
+    
     public static (double[] Cropped, int H, int W) CropLetterbox(
         double[] frame, int h, int w, double frameAr, double targetAr)
     {

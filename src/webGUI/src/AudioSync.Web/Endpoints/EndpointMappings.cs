@@ -10,11 +10,11 @@ using AudioSync.Web.Contracts;
 
 namespace AudioSync.Web.Endpoints;
 
-/// <summary>
-/// Mirror of app.py routes — registers all /api/* endpoints on the WebApplication.
-/// Mode B group: file browse / probe / sessions / align / merge / remux / tasks /
-/// test-interleave / info.
-/// </summary>
+
+
+
+
+
 public static class EndpointMappings
 {
     public static void MapAll(WebApplication app)
@@ -26,7 +26,7 @@ public static class EndpointMappings
         MapInfo(app);
     }
 
-    // ===== /api/browse + /api/file-exists =====
+    
     private static void MapBrowse(WebApplication app)
     {
         app.MapPost("/api/browse", (PathRequest req) =>
@@ -78,16 +78,39 @@ public static class EndpointMappings
             Results.Json(new { exists = !string.IsNullOrEmpty(req.Path) && File.Exists(req.Path) }));
     }
 
-    // ===== /api/probe =====
+    
     private static void MapProbe(WebApplication app)
     {
-        app.MapPost("/api/probe", async (ProbeRequest req, IMediaProber prober, CancellationToken ct) =>
+        app.MapPost("/api/probe", async (ProbeRequest req, IMediaProber prober, SessionStore store, CancellationToken ct) =>
         {
             if (string.IsNullOrEmpty(req.Filepath) || !File.Exists(req.Filepath))
                 return Results.BadRequest(new { error = $"File not found: {req.Filepath}" });
 
+            var name = Path.GetFileName(req.Filepath);
+            var slot = req.Slot is > 0 ? $"V{req.Slot}" : "Probe";
+            if (!string.IsNullOrEmpty(req.Sid) && store.Get(req.Sid!) is not null)
+                store.AppendLog(req.Sid!, $"[{slot}] Probing {name}...");
+
             var info = await prober.ProbeFullAsync(req.Filepath, ct);
             var (changeNeeded, ext) = Languages.NeedsContainerChange(req.Filepath);
+
+            if (!string.IsNullOrEmpty(req.Sid) && store.Get(req.Sid!) is not null)
+            {
+                if (!string.IsNullOrEmpty(info.Error))
+                    store.AppendLog(req.Sid!, $"[{slot}] Probe error: {info.Error}");
+                else
+                {
+                    if (!string.IsNullOrEmpty(info.Warning))
+                        store.AppendLog(req.Sid!, $"[{slot}] {info.Warning}");
+                    var counts = (info.Streams ?? new()).Where(s => !s.Empty)
+                        .GroupBy(s => s.CodecType)
+                        .Select(g => $"{g.Count()} {g.Key}");
+                    store.AppendLog(req.Sid!, $"[{slot}] {name}: {string.Join(", ", counts)}, {SyncEngine.FormatTimestamp(info.Duration)}");
+                    if (changeNeeded && req.Slot == 1)
+                        store.AppendLog(req.Sid!, $"[V1] Container '{ext}' does not support multi-audio, output will use .mkv");
+                }
+            }
+
             return Results.Json(new
             {
                 tracks = info.Tracks,
@@ -103,7 +126,7 @@ public static class EndpointMappings
         });
     }
 
-    // ===== /api/sessions, /api/session/* =====
+    
     private static void MapSessions(WebApplication app)
     {
         app.MapPost("/api/sessions", (SessionStore store) =>
@@ -151,14 +174,6 @@ public static class EndpointMappings
                 return Results.Json(new { ok = true, version = sess.Version, label = sess.Label });
             });
 
-        app.MapGet("/api/session/{sid}/version", (string sid, SessionStore store) =>
-        {
-            var sess = store.Get(sid);
-            return sess is null
-                ? Results.NotFound(new { error = "Session not found" })
-                : Results.Json(new { version = sess.Version });
-        });
-
         app.MapGet("/api/session/{sid}/logs", (string sid, long? after, SessionStore store) =>
         {
             var sess = store.Get(sid);
@@ -168,10 +183,10 @@ public static class EndpointMappings
             return Results.Json(new { entries });
         });
 
-        // Server-Sent Events stream of EVERY session's log entries.
-        // The client opens one EventSource and receives a continuous push for
-        // all sessions (active or background), so logs accumulate even when the
-        // user has switched to a different session.
+        
+        
+        
+        
         app.MapGet("/api/events/stream", async (HttpContext http, SessionStore store,
             Microsoft.Extensions.Hosting.IHostApplicationLifetime lifetime) =>
         {
@@ -179,13 +194,13 @@ public static class EndpointMappings
             http.Response.Headers["Cache-Control"] = "no-cache";
             http.Response.Headers["X-Accel-Buffering"] = "no";
 
-            // Cancel the SSE loop on EITHER client disconnect OR host shutdown.
+            
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(
                 http.RequestAborted, lifetime.ApplicationStopping);
             var ct = cts.Token;
 
-            // Single multiplexed channel for log entries AND task state changes.
-            // Discriminated by the first field on the wire ("kind": "log"|"task").
+            
+            
             var queue = System.Threading.Channels.Channel.CreateUnbounded<object>();
             void LogHandler(string sid, LogEntry entry) =>
                 queue.Writer.TryWrite(new
@@ -222,8 +237,8 @@ public static class EndpointMappings
 
             try
             {
-                // Replay current state for every existing session so a
-                // (re)connecting client gets the full backlog.
+                
+                
                 foreach (var (sid, sess) in store.Snapshot())
                 {
                     foreach (var e in sess.Log) LogHandler(sid, e);
@@ -246,26 +261,17 @@ public static class EndpointMappings
             }
         });
 
-        app.MapPost("/api/session/{sid}/logs", (string sid, LogPostRequest req, SessionStore store) =>
-        {
-            var sess = store.Get(sid);
-            if (sess is null) return Results.NotFound(new { error = "Session not found" });
-            foreach (var msg in (req.Messages ?? new()).Take(50))
-                store.AppendLog(sid, msg ?? "", "client");
-            return Results.Json(new { ok = true, log_idx = sess.LogIdx });
-        });
-
         app.MapDelete("/api/session/{sid}", (string sid, SessionStore store) =>
             store.DeleteSession(sid)
                 ? Results.Json(new { ok = true })
                 : Results.NotFound(new { error = "Session not found" }));
 
-        // align / merge / remux are large — mapped in their own helpers
+        
         SyncEndpoints.Map(app);
         MergeEndpoints.Map(app);
     }
 
-    // ===== /api/session/{sid}/task/{tid} (status + cancel) + test-interleave =====
+    
     private static void MapTasks(WebApplication app)
     {
         app.MapGet("/api/session/{sid}/task/{tid}", (string sid, string tid, SessionStore store) =>
@@ -369,11 +375,11 @@ public static class EndpointMappings
             var plus = info.IndexOf('+');
             if (plus >= 0) info = info[..plus];
         }
-        // SDK default (1.0.0) means no <Version> was set — treat as dev build.
+        
         return (string.IsNullOrEmpty(info) || info == "1.0.0") ? "" : info;
     }
 
-    // ===== / + /api/info + /api/languages =====
+    
     private static void MapInfo(WebApplication app)
     {
         app.MapGet("/api/info", (IToolLocator locator) =>
@@ -406,7 +412,7 @@ public static class EndpointMappings
         });
     }
 
-    // ===== serializers =====
+    
     public static object SerializeSession(SessionEntry s) => new
     {
         label = s.Label,

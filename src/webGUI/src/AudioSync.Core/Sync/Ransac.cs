@@ -10,13 +10,13 @@ public sealed class RansacResult
     public int Inliers { get; init; }
 }
 
-/// <summary>Mirror of audio.py RANSAC + residual + speed-snap helpers.</summary>
+
 public static class Ransac
 {
-    /// <summary>
-    /// Mirror of audio.ransac_linear_fit. Fits t1 = a·t2 + b. Edge-biased pair sampling.
-    /// Optional seed for parity testing — Python default is non-deterministic.
-    /// </summary>
+    
+    
+    
+    
     public static RansacResult LinearFit(double[] t1, double[] t2,
         int nIter = AudioConstants.AudioRansacIterations,
         double threshold = AudioConstants.AudioRansacThresholdSec,
@@ -36,7 +36,7 @@ public static class Ransac
         for (int i = 0; i < n; i++) { if (t2[i] < t2Min) t2Min = t2[i]; if (t2[i] > t2Max) t2Max = t2[i]; }
         double t2Range = t2Max - t2Min;
 
-        // Quartile index buffers (allocated once)
+        
         var q1 = new List<int>();
         var q4 = new List<int>();
         if (n > 20)
@@ -105,7 +105,7 @@ public static class Ransac
 
     private static (double A, double B) LeastSquaresFit(double[] t1, double[] t2, bool[] mask, int count)
     {
-        // Solve [t2 1] · [a;b] = t1 for masked rows.
+        
         var A = Matrix<double>.Build.Dense(count, 2);
         var y = Vector<double>.Build.Dense(count);
         int row = 0;
@@ -121,7 +121,7 @@ public static class Ransac
         return (sol[0], sol[1]);
     }
 
-    /// <summary>Mirror of audio.residual_stats — (mean, max, last).</summary>
+    
     public static (double Mean, double Max, double End) ResidualStats(
         IList<(double T1, double T2, double Sim)> pairs, double a, double b)
     {
@@ -137,7 +137,7 @@ public static class Ransac
         return (sum / pairs.Count, max, last);
     }
 
-    /// <summary>Mirror of audio.snap_speed_to_candidate.</summary>
+    
     public static (double A, double B) SnapSpeedToCandidate(
         double a, double[] t1Inliers, double[] t2Inliers)
     {

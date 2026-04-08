@@ -3,11 +3,11 @@ using MathNet.Numerics.IntegralTransforms;
 
 namespace AudioSync.Core.Sync;
 
-/// <summary>
-/// Real-input FFT helpers matching numpy.fft.rfft / irfft semantics:
-/// rfft returns N/2+1 complex bins from a length-N real signal (no scaling),
-/// irfft reconstructs a length-N real signal from N/2+1 bins (divided by N).
-/// </summary>
+
+
+
+
+
 public static class RealFft
 {
     public static Complex[] Rfft(ReadOnlySpan<double> real, int n)
@@ -37,7 +37,7 @@ public static class RealFft
         var buf = new Complex[n];
         int half = n / 2 + 1;
         for (int i = 0; i < Math.Min(bins.Length, half); i++) buf[i] = bins[i];
-        // Hermitian symmetry: X[N-k] = conj(X[k])
+        
         for (int i = 1; i < n - half + 1; i++)
             buf[n - i] = Complex.Conjugate(buf[i]);
         Fourier.Inverse(buf, FourierOptions.NoScaling);
@@ -47,7 +47,7 @@ public static class RealFft
         return result;
     }
 
-    /// <summary>numpy.fft.rfftfreq(n, d) → frequencies of length n/2+1.</summary>
+    
     public static double[] RfftFreq(int n, double d)
     {
         int len = n / 2 + 1;

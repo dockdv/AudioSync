@@ -68,14 +68,6 @@ jobs:
             rid: linux-x64
             asset: AudioSync-linux-x64
             bin: AudioSync.Web
-          - os: macos-latest
-            rid: osx-arm64
-            asset: AudioSync-osx-arm64.dmg
-            bin: AudioSync.Web
-          - os: macos-latest
-            rid: osx-x64
-            asset: AudioSync-osx-x64.dmg
-            bin: AudioSync.Web
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -108,40 +100,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p release
-          if [[ "${{ runner.os }}" == "macOS" ]]; then
-            VER="${{ github.event.inputs.version }}"
-            VER="${VER#v}"
-            DMGROOT="dmgroot"
-            APP="$DMGROOT/AudioSync.app"
-            rm -rf "$DMGROOT"
-            mkdir -p "$APP/Contents/MacOS"
-            cp "dist/${{ matrix.bin }}" "$APP/Contents/MacOS/AudioSync"
-            chmod +x "$APP/Contents/MacOS/AudioSync"
-            cat > "$APP/Contents/Info.plist" <<PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>CFBundleExecutable</key><string>AudioSync</string>
-            <key>CFBundleIdentifier</key><string>dev.dockdv.audiosync</string>
-            <key>CFBundleName</key><string>AudioSync</string>
-            <key>CFBundlePackageType</key><string>APPL</string>
-            <key>CFBundleVersion</key><string>${VER}</string>
-            <key>CFBundleShortVersionString</key><string>${VER}</string>
-            <key>NSHighResolutionCapable</key><true/>
-          </dict>
-          </plist>
-          PLIST
-            # Ad-hoc sign the inner binary and the bundle so Gatekeeper
-            # treats it as unsigned-but-intact rather than "damaged".
-            codesign --force --sign - "$APP/Contents/MacOS/AudioSync"
-            codesign --force --sign - "$APP"
-            # Drag-to-Applications shortcut inside the DMG.
-            ln -s /Applications "$DMGROOT/Applications"
-            hdiutil create -volname AudioSync -srcfolder "$DMGROOT" -size 500m -fs HFS+ -ov -format UDZO "release/${{ matrix.asset }}"
-          else
-            cp "dist/${{ matrix.bin }}" "release/${{ matrix.asset }}"
-          fi
+          cp "dist/${{ matrix.bin }}" "release/${{ matrix.asset }}"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -167,7 +126,5 @@ jobs:
           gh release create "${{ github.event.inputs.version }}" \
             artifacts/AudioSync-win-x64.exe \
             artifacts/AudioSync-linux-x64 \
-            artifacts/AudioSync-osx-arm64.dmg \
-            artifacts/AudioSync-osx-x64.dmg \
             --title "${{ github.event.inputs.version }}" \
             --generate-notes

@@ -1,6 +1,6 @@
 namespace AudioSync.Core.Sync;
 
-/// <summary>Mirror of sync_engine.build_align_result return shape.</summary>
+
 public sealed class AlignmentResult
 {
     public double SpeedRatio { get; init; }
@@ -20,7 +20,7 @@ public sealed class AlignmentResult
     public double ResidualMax { get; init; }
     public double ResidualEnd { get; init; }
     public double CoarseOffset { get; init; }
-    /// <summary>RANSAC-refined offset before any visual fine-tune was applied.</summary>
+    
     public double? RansacOffset { get; init; }
     public List<DetectedSegment>? Segments { get; init; }
     public List<string> Warnings { get; init; } = new();

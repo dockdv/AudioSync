@@ -14,10 +14,10 @@ public class AtempoChainTests
     [Fact]
     public void Below_Half_SplitsInto_05x_Stages()
     {
-        // 0.2 should produce one or more atempo=0.5 stages followed by a tail
+        
         var chain = MergeHelpers.AtempoChain(0.2);
         Assert.Contains("atempo=0.5", chain);
-        // Product of stages must equal 0.2 within a small tolerance
+        
         double product = 1.0;
         foreach (var s in chain)
         {

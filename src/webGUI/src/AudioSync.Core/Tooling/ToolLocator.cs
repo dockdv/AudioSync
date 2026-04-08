@@ -10,10 +10,10 @@ public sealed class ToolLocatorOptions
     public string? MkvmergePath { get; set; }
 }
 
-/// <summary>
-/// Mirror of fflib._find_binary + mkvmerge._find_mkvmerge + _detect_hwaccel.
-/// Resolution order: explicit config → env var → sidecar dirs → PATH.
-/// </summary>
+
+
+
+
 public sealed class ToolLocator : IToolLocator
 {
     private static readonly string[] HwaccelPriority = { "cuda", "vaapi", "videotoolbox", "qsv" };
@@ -162,8 +162,10 @@ public sealed class ToolLocator : IToolLocator
         return flags;
     }
 
+    private IReadOnlyDictionary<string, string>? _versionCache;
     public IReadOnlyDictionary<string, string> VersionInfo()
     {
+        if (_versionCache is not null) return _versionCache;
         var result = new Dictionary<string, string>();
         foreach (var (name, path) in new[] { ("ffmpeg", Ffmpeg), ("ffprobe", Ffprobe), ("mkvmerge", Mkvmerge) })
         {
@@ -183,13 +185,14 @@ public sealed class ToolLocator : IToolLocator
                 if (!p.WaitForExit(10000)) { try { p.Kill(); } catch { } continue; }
                 var firstLine = p.StandardOutput.ReadToEnd().Split('\n')[0];
                 var parts = firstLine.Split(' ');
-                // ffmpeg/ffprobe → "ffmpeg version 7.x ..."  (parts[2])
-                // mkvmerge       → "mkvmerge v82.0 ('I'm ...)" (parts[1])
+                
+                
                 int verIdx = name == "mkvmerge" ? 1 : 2;
                 result[name] = parts.Length > verIdx ? parts[verIdx] : firstLine.Trim();
             }
             catch { }
         }
+        _versionCache = result;
         return result;
     }
 }

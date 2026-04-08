@@ -5,10 +5,10 @@ using AudioSync.Core.Sync;
 
 namespace AudioSync.Core.Merging;
 
-/// <summary>
-/// Mirror of merger.py stream-classification + tid-computation helpers.
-/// Used by both FfmpegMerger and MkvMerger.
-/// </summary>
+
+
+
+
 public static class MergeHelpers
 {
     private static readonly Dictionary<string, string> MkvTypeMap = new()
@@ -17,10 +17,10 @@ public static class MergeHelpers
         ["subtitle"] = "subtitles", ["attachment"] = "attachment",
     };
 
-    /// <summary>
-    /// Mirror of merger._tids_from_probe — returns (siToTid, tidType) where tids are
-    /// sequential and skip attachment streams.
-    /// </summary>
+    
+    
+    
+    
     public static (Dictionary<int, int> SiToTid, Dictionary<int, string> TidType) TidsFromProbe(ProbeResult? info)
     {
         var siToTid = new Dictionary<int, int>();
@@ -36,7 +36,7 @@ public static class MergeHelpers
         return (siToTid, tidType);
     }
 
-    /// <summary>Mirror of merger._classify_v1_streams.</summary>
+    
     public static void ClassifyV1Streams(SessionContext ctx)
     {
         var st = new Dictionary<int, string>();
@@ -54,7 +54,7 @@ public static class MergeHelpers
         ctx.V1HasSubs = ctx.V1SubSi.Count > 0;
     }
 
-    /// <summary>Mirror of merger._compute_v1_tids.</summary>
+    
     public static void ComputeV1Tids(SessionContext ctx)
     {
         var (siToTid, tidType) = TidsFromProbe(ctx.V1Info);
@@ -75,7 +75,7 @@ public static class MergeHelpers
             tidType.GetValueOrDefault(t) is not ("video" or "audio" or "subtitles")).ToList();
     }
 
-    /// <summary>Mirror of merger._classify_v2_streams.</summary>
+    
     public static void ClassifyV2Streams(SessionContext ctx)
     {
         var st = new Dictionary<int, string>();
@@ -95,7 +95,7 @@ public static class MergeHelpers
             .Select(si => v2AllAudioSi.IndexOf(si)).ToList();
     }
 
-    /// <summary>Mirror of merger._compute_v2_tids — depends on tmp_audio / streamcopy mode.</summary>
+    
     public static void ComputeV2Tids(SessionContext ctx)
     {
         if (!string.IsNullOrEmpty(ctx.TmpAudioPath))
@@ -110,7 +110,7 @@ public static class MergeHelpers
             : new();
     }
 
-    /// <summary>Mirror of merger._compute_audio_ordering.</summary>
+    
     public static void ComputeAudioOrdering(SessionContext ctx)
     {
         const int fileIdV2 = 1;
@@ -120,7 +120,7 @@ public static class MergeHelpers
 
         if (ctx.AudioOrder is not null && ctx.AudioOrder.Count == ctx.AudioFt.Count)
         {
-            // AudioOrder is a permutation of source indices into AudioFt (Python contract).
+            
             var ordered = new List<(int, int)>(ctx.AudioOrder.Count);
             foreach (var srcIdx in ctx.AudioOrder)
             {
@@ -171,14 +171,14 @@ public static class MergeHelpers
         }
     }
 
-    /// <summary>Look up audio metadata by source index (the position in AudioFt before reordering).</summary>
+    
     public static AudioMetadata? AudioMetaForSrcIndex(SessionContext ctx, int srcIdx)
         => ctx.AudioSrcToMeta.TryGetValue((srcIdx, 0), out var m) ? m : null;
 
-    /// <summary>
-    /// Mirror of merger._atempo_chain — split atempo into ffmpeg-friendly steps
-    /// (each filter clamped to 0.5..100×; chain length up to 20+20).
-    /// </summary>
+    
+    
+    
+    
     public static List<string> AtempoChain(double atempo)
     {
         if (Math.Abs(atempo - 1.0) <= 0.0001) return new();

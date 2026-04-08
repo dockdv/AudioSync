@@ -8,7 +8,7 @@ public sealed class DetectedSegment
     public int NInliers { get; set; }
 }
 
-/// <summary>Mirror of audio.detect_segments — sliding-window xcorr scan + clustering.</summary>
+
 public static class SegmentDetector
 {
     public static List<DetectedSegment> Detect(

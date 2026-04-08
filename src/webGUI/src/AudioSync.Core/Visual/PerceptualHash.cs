@@ -1,9 +1,9 @@
 namespace AudioSync.Core.Visual;
 
-/// <summary>
-/// Mirror of visual.py _dct2 / _phash / frame_similarity.
-/// 32×32 grayscale frame → 2D Type-II DCT → 8×8 top-left → median threshold → 64-bit hash.
-/// </summary>
+
+
+
+
 public static class PerceptualHash
 {
     public const int DctSize = 32;
@@ -20,11 +20,11 @@ public static class PerceptualHash
         return b;
     }
 
-    /// <summary>Separable Type-II 2D DCT (no orthonormal scaling), matching visual._dct2.</summary>
+    
     public static double[,] Dct2(double[,] block)
     {
         int n = block.GetLength(0);
-        // tmp = basis.T @ block  (n,n) = (k1,n1) · (n1,n2)
+        
         var tmp = new double[n, n];
         for (int k1 = 0; k1 < n; k1++)
         {
@@ -36,7 +36,7 @@ public static class PerceptualHash
                 tmp[k1, n2] = s;
             }
         }
-        // out = tmp @ basis  (k1,k2) = (k1,n2) · (n2,k2)
+        
         var outArr = new double[n, n];
         for (int k1 = 0; k1 < n; k1++)
         {
@@ -51,11 +51,11 @@ public static class PerceptualHash
         return outArr;
     }
 
-    /// <summary>
-    /// Mirror of visual._phash. Resizes frame to 32×32 (block-mean if downsampling,
-    /// nearest-via-linspace if upsampling), runs DCT, hashes 64 low-frequency
-    /// coefficients (skipping DC for the median).
-    /// </summary>
+    
+    
+    
+    
+    
     public static ulong PHash(double[] frame, int height, int width)
     {
         var resized = new double[DctSize, DctSize];
@@ -63,7 +63,7 @@ public static class PerceptualHash
         int rw = width / DctSize;
         if (rh >= 1 && rw >= 1)
         {
-            // Block-mean reduction: frame[:rh*32, :rw*32] reshape (32,rh,32,rw) mean over (1,3)
+            
             int ch = rh * DctSize;
             int cw = rw * DctSize;
             double inv = 1.0 / (rh * rw);
@@ -86,7 +86,7 @@ public static class PerceptualHash
         }
         else
         {
-            // numpy linspace(0, w-1, 32).astype(int) — truncate toward zero
+            
             var xs = new int[DctSize];
             var ys = new int[DctSize];
             for (int i = 0; i < DctSize; i++)
@@ -101,13 +101,13 @@ public static class PerceptualHash
 
         var dct = Dct2(resized);
 
-        // Take 8×8 top-left, flatten row-major (matching numpy ravel order)
+        
         Span<double> low = stackalloc double[HashSize * HashSize];
         for (int y = 0; y < HashSize; y++)
             for (int x = 0; x < HashSize; x++)
                 low[y * HashSize + x] = dct[y, x];
 
-        // Median of low[1:]
+        
         Span<double> tail = stackalloc double[HashSize * HashSize - 1];
         for (int i = 1; i < low.Length; i++) tail[i - 1] = low[i];
         var sorted = tail.ToArray();
@@ -123,7 +123,7 @@ public static class PerceptualHash
         return hash;
     }
 
-    /// <summary>Mirror of visual.frame_similarity (1 - hamming/64).</summary>
+    
     public static double FrameSimilarity(double[]? f1, int h1, int w1, double[]? f2, int h2, int w2)
     {
         if (f1 is null || f2 is null) return -1.0;

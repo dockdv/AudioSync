@@ -233,8 +233,8 @@ input[type="checkbox"] { accent-color: var(--ac); }
     justify-content: center;
     font-size: 11px;
     font-weight: 600;
-    color: var(--fg);
-    text-shadow: 0 0 2px rgba(0,0,0,0.6);
+    color: #000;
+    text-shadow: 0 0 2px rgba(255,255,255,0.7);
     pointer-events: none;
     line-height: 1;
 }

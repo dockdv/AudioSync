@@ -3,10 +3,10 @@ using System.Text.RegularExpressions;
 
 namespace AudioSync.Core.Tooling;
 
-/// <summary>
-/// Mirror of fflib.py — thin wrappers around ffmpeg/ffprobe via IProcessRunner.
-/// Returns raw byte/string/primitive shapes; higher-level parsing lives in Probing/.
-/// </summary>
+
+
+
+
 public sealed class FfLib
 {
     public const int FrameW = 160;
@@ -30,7 +30,7 @@ public sealed class FfLib
     private string Ffprobe => _locator.Ffprobe
         ?? throw new InvalidOperationException("ffprobe not found");
 
-    /// <summary>Mirror of fflib._parse_frame_rate.</summary>
+    
     public static double ParseFrameRate(string? s)
     {
         if (string.IsNullOrEmpty(s) || s == "0/0") return 0.0;
@@ -44,7 +44,7 @@ public sealed class FfLib
         return double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var f) ? f : 0.0;
     }
 
-    /// <summary>Raw ffprobe -show_format -show_streams JSON for a file.</summary>
+    
     public async Task<string> ProbeJsonAsync(string handle, CancellationToken ct = default)
     {
         var res = await _runner.RunAsync(new ProcessRunOptions
@@ -60,11 +60,11 @@ public sealed class FfLib
         return System.Text.Encoding.UTF8.GetString(res.Stdout);
     }
 
-    /// <summary>
-    /// Mirror of fflib._audio_streams_with_packets — set of stream indices that
-    /// emit at least one audio packet within the first maxSeconds. Detects phantom
-    /// audio tracks declared in the header but never muxed.
-    /// </summary>
+    
+    
+    
+    
+    
     public async Task<HashSet<int>> AudioStreamsWithPacketsAsync(
         string handle, int maxSeconds = 60, CancellationToken ct = default)
     {
@@ -92,7 +92,7 @@ public sealed class FfLib
         return present;
     }
 
-    /// <summary>Raw duration via ffprobe -show_format.</summary>
+    
     public async Task<double> GetDurationAsync(string handle, CancellationToken ct = default)
     {
         var res = await _runner.RunAsync(new ProcessRunOptions
@@ -116,10 +116,10 @@ public sealed class FfLib
         return 0.0;
     }
 
-    /// <summary>
-    /// Mirror of fflib.measure_lufs — runs ebur128 filter, parses Integrated I.
-    /// Returns null if not parseable.
-    /// </summary>
+    
+    
+    
+    
     public async Task<double?> MeasureLufsAsync(
         string handle, int audioTrackIndex, CancellationToken ct = default)
     {
@@ -146,10 +146,10 @@ public sealed class FfLib
         return null;
     }
 
-    /// <summary>
-    /// Mirror of fflib.decode_audio — pipe PCM f32le mono to memory.
-    /// Returns float samples + ffmpeg stderr (warnings).
-    /// </summary>
+    
+    
+    
+    
     public async Task<(float[] Samples, string? Warnings)> DecodeAudioAsync(
         string handle, int audioTrackIndex, int targetSr,
         bool vocalFilter = false,
@@ -193,7 +193,7 @@ public sealed class FfLib
             return (samples, string.IsNullOrEmpty(res.Stderr) ? null : res.Stderr);
         }
 
-        // Streaming mode with byte-counted progress.
+        
         long expectedBytes = (long)(duration * targetSr * 4);
         long totalRead = 0;
         int lastPct = -1;
@@ -233,13 +233,13 @@ public sealed class FfLib
         return samples;
     }
 
-    /// <summary>Mirror of fflib._tonemap_vf.</summary>
+    
     private static string TonemapVf(int width, int height) => $"format=gray,scale={width}:{height}";
 
-    /// <summary>
-    /// Mirror of fflib.extract_frame / extract_frame_full — single grayscale frame.
-    /// Returns null if the byte count doesn't match the expected size.
-    /// </summary>
+    
+    
+    
+    
     public async Task<byte[]?> ExtractFrameAsync(
         string handle, double timestamp,
         int width = FrameW, int height = FrameH,
@@ -264,7 +264,7 @@ public sealed class FfLib
         return res.Stdout;
     }
 
-    /// <summary>Mirror of fflib.get_keyframe_timestamps.</summary>
+    
     public async Task<List<double>> GetKeyframeTimestampsAsync(
         string handle, double start = 0.0, double? end = null,
         CancellationToken ct = default)
@@ -306,7 +306,7 @@ public sealed class FfLib
         return timestamps;
     }
 
-    /// <summary>Native frame rate of the first video stream (parsed from r_frame_rate).</summary>
+    
     public async Task<double> GetVideoFrameRateAsync(string handle, CancellationToken ct = default)
     {
         var res = await _runner.RunAsync(new ProcessRunOptions
@@ -324,12 +324,12 @@ public sealed class FfLib
         return ParseFrameRate(s);
     }
 
-    /// <summary>
-    /// Stream a contiguous sequence of grayscale frames in a single ffmpeg call.
-    /// Uses fast+accurate seek (input seek 3s ahead, output seek to trim).
-    /// Returns (timestamp, raw uint8 bytes) per frame; timestamps are computed
-    /// from the supplied native fps.
-    /// </summary>
+    
+    
+    
+    
+    
+    
     public async Task<List<(double Time, byte[] Frame)>> ExtractFrameSequenceAsync(
         string handle, double start, double duration,
         int width, int height, double fps,
@@ -369,7 +369,7 @@ public sealed class FfLib
         return frames;
     }
 
-    /// <summary>Mirror of fflib.get_video_resolution.</summary>
+    
     public async Task<(int? Width, int? Height)> GetVideoResolutionAsync(
         string handle, CancellationToken ct = default)
     {
@@ -393,9 +393,9 @@ public sealed class FfLib
         return (null, null);
     }
 
-    /// <summary>
-    /// Mirror of fflib.probe_packets — dict[stream_index → sorted DTS list].
-    /// </summary>
+    
+    
+    
     public async Task<Dictionary<int, List<double>>> ProbePacketsAsync(
         string handle,
         Action<string, string>? progressCallback = null,

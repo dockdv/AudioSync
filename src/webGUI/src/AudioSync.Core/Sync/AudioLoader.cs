@@ -3,19 +3,19 @@ using AudioSync.Core.Tooling;
 
 namespace AudioSync.Core.Sync;
 
-/// <summary>
-/// Mirror of audio.decode_full_audio + sync_engine._bandreject. Wraps FfLib for
-/// piped PCM decoding and applies the FFT-domain vocal bandreject filter.
-/// </summary>
+
+
+
+
 public sealed class AudioLoader
 {
     private readonly FfLib _ff;
     public AudioLoader(FfLib ff) { _ff = ff; }
 
-    /// <summary>
-    /// Mirror of audio.decode_full_audio. Returns samples + warning messages
-    /// (FFmpeg stderr + short-decode warning).
-    /// </summary>
+    
+    
+    
+    
     public async Task<(float[] Samples, List<string> Warnings)> DecodeFullAudioAsync(
         string filepath, int trackIndex, int sr,
         bool vocalFilter = false,
@@ -36,16 +36,16 @@ public sealed class AudioLoader
         return (audio, msgs);
     }
 
-    /// <summary>
-    /// Mirror of sync_engine._bandreject — overlapping 30s chunks (2s overlap),
-    /// FFT bandreject 1000Hz ± 1350Hz with 50Hz tapered edges, ramped blend on overlap.
-    /// </summary>
+    
+    
+    
+    
     public static float[] BandReject(float[] audio, int sr, double center = 1000.0, double width = 2700.0)
     {
         double lo = center - width / 2;
         double hi = center + width / 2;
-        // Pow2 chunk so MathNet's FFT uses Cooley–Tukey, not Bluestein (~10× faster).
-        // 262144 ≈ 32.77 s at sr=8000, close to Python's 30 s window.
+        
+        
         int chunk = 262144;
         int overlap = sr * 2;
         int n = audio.Length;

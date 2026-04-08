@@ -103,7 +103,6 @@
                 <div class="row mt-4">
                     <button class="btn-green merge-h28" id="align-btn" onclick="runAlign()" style="flex:1">Auto-Align</button>
                 </div>
-                <div class="progress-bar merge-h28" id="align-progress"><div class="fill"></div><span class="pct"></span></div>
             </div>
         </div>
 
@@ -161,15 +160,15 @@
                 <div class="row">
                     <button class="btn-green merge-h28" id="merge-btn" onclick="runMerge()" style="flex:1">Run Merge</button>
                 </div>
-                <div class="progress-bar merge-h28" id="merge-progress" style="margin-bottom:30px"><div class="fill"></div><span class="pct"></span></div>
-                <div class="row">
-                    <button class="btn-red merge-h28 hidden" id="global-stop" onclick="cancelRunningTask()" style="flex:1">Stop</button>
-                </div>
                 <button class="btn-red merge-h28 mt-4" id="close-session-btn" onclick="closeSession()" style="width:100%">Close Session</button>
             </div>
         </div>
 
         <div class="panel full">
+            <div class="panel-body" style="display:flex;align-items:center;gap:8px;padding-bottom:0">
+                <div class="progress-bar merge-h28" id="task-progress" style="flex:1"><div class="fill"></div><span class="pct"></span></div>
+                <button class="btn-red merge-h28 hidden" id="task-stop" onclick="cancelRunningTask()" style="width:90px">Stop</button>
+            </div>
             <div class="panel-title">Logs</div>
             <div class="panel-body">
                 <textarea class="log-box" id="log-box" readonly></textarea>
@@ -213,10 +212,8 @@ let LANG_NAMES = {};
     } catch (e) {
         console.error('Boot info fetch failed:', e);
     }
-    const s = document.createElement('script');
-    s.src = '/js/app.js';
-    document.body.appendChild(s);
 })();
 </script>
+<script src="/js/app.js" defer></script>
 </body>
 </html>

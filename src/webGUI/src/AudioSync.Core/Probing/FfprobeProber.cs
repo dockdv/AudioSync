@@ -4,10 +4,10 @@ using AudioSync.Core.Tooling;
 
 namespace AudioSync.Core.Probing;
 
-/// <summary>
-/// Mirror of fflib.probe() + probe.probe_full() — parses ffprobe JSON into typed
-/// MediaInfo records, filters phantom audio tracks (declared but no packets).
-/// </summary>
+
+
+
+
 public sealed class FfprobeProber : IMediaProber
 {
     private readonly FfLib _ff;
@@ -21,7 +21,7 @@ public sealed class FfprobeProber : IMediaProber
         var root = doc.RootElement;
         var streamsEl = root.TryGetProperty("streams", out var s) ? s : default;
 
-        // Declared audio indices
+        
         var declaredAudio = new HashSet<int>();
         if (streamsEl.ValueKind == JsonValueKind.Array)
         {
@@ -50,8 +50,8 @@ public sealed class FfprobeProber : IMediaProber
                 presentAudio = new HashSet<int>(declaredAudio);
             }
         }
-        // Defensive: if probe returned nothing for a file that does declare audio,
-        // fall back to trusting the header rather than dropping every track.
+        
+        
         if (declaredAudio.Count > 0 && presentAudio.Count == 0)
             presentAudio = new HashSet<int>(declaredAudio);
 

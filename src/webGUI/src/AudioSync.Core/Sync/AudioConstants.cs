@@ -1,6 +1,6 @@
 namespace AudioSync.Core.Sync;
 
-/// <summary>Mirror of audio.py module-level constants.</summary>
+
 public static class AudioConstants
 {
     public const int AudioSampleRate = 8000;

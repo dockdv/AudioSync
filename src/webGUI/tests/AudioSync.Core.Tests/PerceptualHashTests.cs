@@ -47,7 +47,7 @@ public class PerceptualHashTests
             for (int x = 0; x < 32; x++)
                 block[y, x] = 5.0;
         var dct = PerceptualHash.Dct2(block);
-        // DC coefficient is sum (no scaling), all others ≈ 0
+        
         Assert.Equal(5.0 * 32 * 32, dct[0, 0], 6);
         for (int y = 0; y < 32; y++)
             for (int x = 0; x < 32; x++)

@@ -3,13 +3,13 @@ using AudioSync.Core.Tooling;
 
 namespace AudioSync.Core.Visual;
 
-/// <summary>
-/// Mirror of visual.py — implements IVisualMatcher using FfLib for frame extraction
-/// and PerceptualHash + CutDetector for matching. Algorithm parity with the Python.
-/// </summary>
+
+
+
+
 public sealed class VisualMatcher : IVisualMatcher
 {
-    private const double FrameTol = 0.083; // ±2 frames @ 24fps
+    private const double FrameTol = 0.083; 
     private const double SimAcceptHigh = 0.8;
     private const double SimAcceptLow = 0.5;
 
@@ -18,7 +18,7 @@ public sealed class VisualMatcher : IVisualMatcher
 
     public VisualMatcher(FfLib ff, CutDetector cuts) { _ff = ff; _cuts = cuts; }
 
-    // ===== helpers =====
+    
 
     private async Task<(double[]? Frame, int H, int W)> ExtractFrameSafeAsync(
         string path, double t, CancellationToken ct)
@@ -42,7 +42,7 @@ public sealed class VisualMatcher : IVisualMatcher
         return PerceptualHash.FrameSimilarity(f1.Frame, f1.H, f1.W, f2.Frame, f2.H, f2.W);
     }
 
-    // ===== validate_segments_visual =====
+    
 
     public async Task<bool> ValidateSegmentsVisualAsync(
         string v1Path, string v2Path,
@@ -88,7 +88,7 @@ public sealed class VisualMatcher : IVisualMatcher
         return true;
     }
 
-    // ===== refine_boundary_visual =====
+    
 
     public async Task<List<DetectedSegment>> RefineBoundaryVisualAsync(
         string v1Path, string v2Path,
@@ -135,7 +135,7 @@ public sealed class VisualMatcher : IVisualMatcher
         return refined;
     }
 
-    // ===== refine_offset_visual =====
+    
 
     public async Task<double?> RefineOffsetVisualAsync(
         string v1Path, string v2Path,
@@ -199,7 +199,7 @@ public sealed class VisualMatcher : IVisualMatcher
             double duration = t2End - t2Start;
             if (duration <= 0) return null;
 
-            // Stream every frame in the ±10s V2 window via a single ffmpeg call.
+            
             var frames = await _ff.ExtractFrameSequenceAsync(
                 v2Path, t2Start, duration, v2W.Value, v2H.Value, v2Fps, ct).ConfigureAwait(false);
             if (frames.Count < 2)
@@ -208,7 +208,7 @@ public sealed class VisualMatcher : IVisualMatcher
                 return null;
             }
 
-            // Pre-crop V1's cut + prev frames (the targets) once
+            
             var (v1CutCrop, v1CutH, v1CutW) = CutDetector.CropLetterbox(v1Frame, v1H.Value, v1W.Value, v1Ar, widerAr);
             var (v1PrevCrop, v1PrevH, v1PrevW) = CutDetector.CropLetterbox(v1PrevFrame, v1H.Value, v1W.Value, v1Ar, widerAr);
 
@@ -224,7 +224,7 @@ public sealed class VisualMatcher : IVisualMatcher
                 var (curT, curBytes) = frames[i];
                 var (_, prevBytes) = frames[i - 1];
 
-                // MSE check (in raw bytes — no double conversion until we need it)
+                
                 double sum = 0;
                 for (int k = 0; k < frameSize; k++)
                 {
@@ -234,7 +234,7 @@ public sealed class VisualMatcher : IVisualMatcher
                 double mse = sum / frameSize;
                 if (mse <= CutDetector.MseThreshold) continue;
 
-                // Skip dark scenes (pHash unreliable)
+                
                 double mean = 0;
                 for (int k = 0; k < frameSize; k++) mean += curBytes[k];
                 mean /= frameSize;
@@ -246,7 +246,7 @@ public sealed class VisualMatcher : IVisualMatcher
                 var cutSim = PerceptualHash.FrameSimilarity(v1CutCrop, v1CutH, v1CutW, v2CutCrop, v2CutH, v2CutW);
                 if (cutSim <= bestSim) continue;
 
-                // Verify: prev frame on both sides should also match (same pre-cut scene)
+                
                 var prevFrame = CutDetector.ToFrame(prevBytes);
                 var (v2PrevCrop, v2PrevH2, v2PrevW2) = CutDetector.CropLetterbox(prevFrame, v2H.Value, v2W.Value, v2Ar, widerAr);
                 var prevSim = PerceptualHash.FrameSimilarity(v1PrevCrop, v1PrevH, v1PrevW, v2PrevCrop, v2PrevH2, v2PrevW2);

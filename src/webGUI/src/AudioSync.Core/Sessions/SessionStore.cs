@@ -10,12 +10,12 @@ public sealed class SessionStoreOptions
     public TimeSpan PurgeInterval { get; set; } = TimeSpan.FromMinutes(5);
 }
 
-/// <summary>
-/// Mirror of app.py _sessions + lock + lifecycle helpers (_new_session,
-/// _start_task, _update_task, _purge_stale_sessions, _serialize_session,
-/// _append_log, _get_task). All access is serialized through a single lock
-/// matching the Python design.
-/// </summary>
+
+
+
+
+
+
 public sealed class SessionStore
 {
     private readonly Dictionary<string, SessionEntry> _sessions = new();
@@ -23,16 +23,16 @@ public sealed class SessionStore
     private readonly SessionStoreOptions _opts;
     private long _lastPurgeTicks;
 
-    /// <summary>
-    /// Raised after a log entry has been appended to a session. Handlers run
-    /// outside the store lock so subscribers may safely call back into the store.
-    /// </summary>
+    
+    
+    
+    
     public event Action<string, LogEntry>? LogAppended;
 
-    /// <summary>
-    /// Raised after a task is started, updated, or finished. Subscribers should
-    /// not mutate the BackgroundJob — it is shared. Raised outside the store lock.
-    /// </summary>
+    
+    
+    
+    
     public event Action<string, BackgroundJob>? TaskUpdated;
 
     public SessionStore(SessionStoreOptions? options = null)
@@ -57,7 +57,7 @@ public sealed class SessionStore
         }
     }
 
-    /// <summary>Mirror of _new_session — allocates 16-char UUID, registers session.</summary>
+    
     public string NewSession()
     {
         var sid = Guid.NewGuid().ToString("N").Substring(0, 16);
@@ -77,9 +77,9 @@ public sealed class SessionStore
         return sid;
     }
 
-    /// <summary>
-    /// Mirror of _start_task. Returns (job, error) — job is null if rejected.
-    /// </summary>
+    
+    
+    
     public (BackgroundJob? Job, string? Error) StartTask(
         string sid, string taskType, IReadOnlyDictionary<string, object?>? @params)
     {
@@ -114,7 +114,7 @@ public sealed class SessionStore
             else if (!string.IsNullOrEmpty(v1))
                 sess.Label = $"{Path.GetFileName(v1)} (remux)";
 
-            // raise outside the lock
+            
             var jobToFire = job;
             var sidToFire = sid;
             Task.Run(() => { try { TaskUpdated?.Invoke(sidToFire, jobToFire); } catch { } });
@@ -123,7 +123,7 @@ public sealed class SessionStore
         }
     }
 
-    /// <summary>Mirror of _update_task — applies status/progress/result/error fields.</summary>
+    
     public void UpdateTask(string sid, string tid,
         JobStatus? status = null, string? progress = null, object? result = null, string? error = null,
         int? percent = null)
@@ -154,10 +154,10 @@ public sealed class SessionStore
         }
     }
 
-    /// <summary>
-    /// Mirror of _ensure_task_finished — called after the task thread exits;
-    /// marks the task as error if it never reached a terminal state.
-    /// </summary>
+    
+    
+    
+    
     public void EnsureTaskFinished(string sid, string tid)
     {
         BackgroundJob? toFire = null;
@@ -179,7 +179,7 @@ public sealed class SessionStore
         }
     }
 
-    /// <summary>Mirror of _get_task — touches updated_at, returns task copy.</summary>
+    
     public BackgroundJob? GetTask(string sid, string tid)
     {
         lock (_lock)
@@ -234,17 +234,17 @@ public sealed class SessionStore
             if (sess.Log.Count > 1000)
                 sess.Log.RemoveRange(0, sess.Log.Count - 1000);
         }
-        // Raise outside the lock so subscribers may call back safely.
+        
         if (entry is not null)
         {
             try { LogAppended?.Invoke(sid, entry); } catch { }
         }
     }
 
-    /// <summary>
-    /// Mirror of _purge_stale_sessions. MUST be called while holding _lock —
-    /// these methods all do that.
-    /// </summary>
+    
+    
+    
+    
     public void PurgeStale()
     {
         var now = Now();
@@ -258,7 +258,7 @@ public sealed class SessionStore
             var ageSec = TicksToSeconds(now - s.UpdatedAtTicks);
             if (ageSec <= _opts.IdleTtl.TotalSeconds) continue;
 
-            // Fix stale active_task pointer before deciding
+            
             if (s.ActiveTask != null)
             {
                 if (!s.Tasks.TryGetValue(s.ActiveTask, out var at) || at.Status != JobStatus.Running)

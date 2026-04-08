@@ -7,7 +7,7 @@ public class RansacTests
     [Fact]
     public void LinearFit_RecoversSlopeAndInterceptFromCleanData()
     {
-        // t1 = 1.001 * t2 + 2.5 over [0, 100]
+        
         const double a = 1.001, b = 2.5;
         var t2 = Enumerable.Range(0, 200).Select(i => i * 0.5).ToArray();
         var t1 = t2.Select(t => a * t + b).ToArray();
@@ -25,7 +25,7 @@ public class RansacTests
         var rng = new Random(11);
         var t2 = Enumerable.Range(0, 200).Select(i => (double)i).ToArray();
         var t1 = t2.Select(t => a * t + b).ToArray();
-        // Inject 30 random outliers
+        
         for (int k = 0; k < 30; k++)
         {
             int i = rng.Next(t1.Length);
@@ -40,7 +40,7 @@ public class RansacTests
     [Fact]
     public void SnapSpeedToCandidate_SnapsWithinTolerance()
     {
-        // PAL→NTSC ratio 25/24 ≈ 1.04167; pass a value 0.001 off
+        
         double a = 25.0 / 24.0 + 0.0005;
         var t1 = new[] { 0.0, 1.0 };
         var t2 = new[] { 0.0, 0.96 };
@@ -51,7 +51,7 @@ public class RansacTests
     [Fact]
     public void SnapSpeedToCandidate_NoSnapWhenOutsideTolerance()
     {
-        // 1.5x is far from any candidate
+        
         double a = 1.5;
         var t1 = new[] { 0.0, 1.0 };
         var t2 = new[] { 0.0, 0.5 };
@@ -64,9 +64,9 @@ public class RansacTests
     {
         var pairs = new List<(double T1, double T2, double Sim)>
         {
-            (1.0, 1.0, 0), // r = 0
-            (3.0, 2.0, 0), // r = 1
-            (5.0, 3.0, 0), // r = 2
+            (1.0, 1.0, 0), 
+            (3.0, 2.0, 0), 
+            (5.0, 3.0, 0), 
         };
         var (mean, max, end) = Ransac.ResidualStats(pairs, 1.0, 0.0);
         Assert.Equal(1.0, mean, 9);

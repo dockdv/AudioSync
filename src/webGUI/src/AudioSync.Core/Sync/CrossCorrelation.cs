@@ -10,12 +10,12 @@ public sealed class XcorrResult
     public List<(double Offset, double Speed, double Correlation)>? AltOffsets { get; init; }
 }
 
-/// <summary>
-/// Mirror of audio.py downsample/xcorr/peak/filter helpers. All double-precision.
-/// </summary>
+
+
+
 public static class CrossCorrelation
 {
-    /// <summary>Mirror of audio.downsample_audio (mean of |samples| in fixed-size blocks).</summary>
+    
     public static (double[] Ds, double EffectiveRate) DownsampleAudio(
         float[] audio, int sr = AudioConstants.AudioSampleRate)
     {
@@ -34,7 +34,7 @@ public static class CrossCorrelation
         return (ds, effectiveRate);
     }
 
-    /// <summary>Mirror of audio.filter_matches_by_offset.</summary>
+    
     public static List<(int I, int J, double Sim)> FilterMatchesByOffset(
         List<(int I, int J, double Sim)> matches, double[] ts1, double[] ts2,
         double coarseOffset, double windowSec = AudioConstants.AudioXcorrWindowSec, double speed = 1.0)
@@ -71,7 +71,7 @@ public static class CrossCorrelation
         return peaks;
     }
 
-    /// <summary>numpy.interp(linspace(0, len(d)-1, outLen), arange(len(d)), d).</summary>
+    
     public static double[] LinearResample(double[] data, int outLen)
     {
         if (data.Length == 0 || outLen <= 0) return Array.Empty<double>();
@@ -95,7 +95,7 @@ public static class CrossCorrelation
         return result;
     }
 
-    /// <summary>Mirror of audio.xcorr_on_downsampled.</summary>
+    
     public static XcorrResult XcorrOnDownsampled(
         double[] d1, double[] d2, double effectiveRate, double[] speedCandidates,
         bool returnAltOffsets = false)

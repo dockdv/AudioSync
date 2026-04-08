@@ -11,16 +11,16 @@ public sealed class LogEntry
     public double Ts { get; init; }
 }
 
-/// <summary>
-/// Mirror of one row in app.py _sessions dict — wraps SessionContext with
-/// task tracking, log ring, label, version counter, and TTL bookkeeping.
-/// All mutating operations must be performed under SessionStore's lock.
-/// </summary>
+
+
+
+
+
 public sealed class SessionEntry
 {
     public string Id { get; init; } = "";
     public DateTimeOffset CreatedWall { get; init; } = DateTimeOffset.UtcNow;
-    public long CreatedAtTicks { get; init; }     // Stopwatch ticks for monotonic age
+    public long CreatedAtTicks { get; init; }     
     public long UpdatedAtTicks { get; set; }
     public string Label { get; set; } = "New session";
     public SessionContext Ctx { get; init; } = new();

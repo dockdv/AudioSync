@@ -73,7 +73,7 @@ public class SessionStoreTests
         var s = new SessionStore();
         var sid = s.NewSession();
         var (job, _) = s.StartTask(sid, "align", null);
-        // task thread "exits" without ever calling UpdateTask
+        
         s.EnsureTaskFinished(sid, job!.Id);
         Assert.Equal(JobStatus.Error, job.Status);
         Assert.Equal("Task died unexpectedly", job.Error);

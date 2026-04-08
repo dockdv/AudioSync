@@ -9,23 +9,23 @@ namespace AudioSync.Web.Endpoints;
 
 public static class SyncEndpoints
 {
-    /// <summary>
-    /// Computes a monotonic 0..99 percent for the auto-align pipeline by
-    /// parsing the existing status/fp events emitted by SyncEngine. Bands:
-    ///   decode      0..80 (sub-progress, average of V1+V2)
-    ///   lufs        snap to 82
-    ///   mel-fp      → 93 (sub-progress, average of V1+V2)
-    ///   energy-fp   → 95 (sub-progress, average of V1+V2)
-    ///   xcorr/match snap to 95
-    ///   ransac      snap to 96
-    ///   seg-detect  snap to 97
-    ///   visual      snap to 99
-    ///   done        100 (set by SessionStore on terminal status)
-    /// </summary>
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     private sealed class AlignPhaseTracker
     {
         private int _v1Dec, _v2Dec, _v1Mel, _v2Mel, _v1En, _v2En;
-        private int _melStart = 80;   // bumped to 82 once LUFS is seen
+        private int _melStart = 80;   
         private int _current;
 
         private int Hold(int p) { if (p > _current) _current = p; return _current; }
@@ -34,7 +34,7 @@ public static class SyncEndpoints
         {
             if (kind == "status")
             {
-                // "Decoding V1: 47%" / "Decoding V2: 12%"
+                
                 if (msg.StartsWith("Decoding V1: ", StringComparison.Ordinal)
                     || msg.StartsWith("Decoding V2: ", StringComparison.Ordinal))
                 {
@@ -69,7 +69,7 @@ public static class SyncEndpoints
             }
             if (kind == "fp")
             {
-                // "V1 Mel: 1234/5678" | "V2 Mel: …" | "V1 energy: …" | "V2 energy: …"
+                
                 int colon = msg.IndexOf(':');
                 int slash = msg.IndexOf('/');
                 if (colon < 0 || slash <= colon + 1) return null;
@@ -121,7 +121,7 @@ public static class SyncEndpoints
                     {
                         var pct = tracker.Apply(kind, msg);
                         store.UpdateTask(sid, job!.Id, progress: msg, percent: pct);
-                        // Skip noisy per-percent decode lines from the log feed; the progress bar already shows them.
+                        
                         bool isDecodeProgress = kind == "status"
                             && (msg.StartsWith("Decoding V1: ", StringComparison.Ordinal)
                                 || msg.StartsWith("Decoding V2: ", StringComparison.Ordinal));
@@ -153,7 +153,7 @@ public static class SyncEndpoints
                         };
 
                         var r = await engine.AutoAlignAudioAsync(ctx, Cb, job!.Cancel.Token);
-                        // Mirror Python's segment serialization: replace inf with 1e9
+                        
                         var segs = (r.Segments ?? new()).Select(s => new
                         {
                             v1_start = s.V1Start,
@@ -192,6 +192,7 @@ public static class SyncEndpoints
                             fps_adjusted = r.FpsAdjusted,
                             visual_refined_offset = r.VisualRefinedOffset,
                             ransac_offset = r.RansacOffset,
+                            detail_text = SyncEngine.BuildAlignDetail(r),
                         });
                     }
                     catch (OperationCanceledException) { store.UpdateTask(sid, job!.Id, status: JobStatus.Cancelled, error: "Cancelled"); }

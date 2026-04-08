@@ -9,11 +9,11 @@ using Microsoft.Extensions.FileProviders;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Default is 30s — too long for an interactive local tool. Cap shutdown drain at 2s.
+
 builder.Services.Configure<Microsoft.Extensions.Hosting.HostOptions>(o =>
     o.ShutdownTimeout = TimeSpan.FromSeconds(2));
 
-// Tool locator (config-driven, sidecar/PATH fallback)
+
 var toolOpts = new ToolLocatorOptions
 {
     FfmpegPath = builder.Configuration["Tools:Ffmpeg"],
@@ -25,10 +25,10 @@ builder.Services.AddSingleton<IToolLocator>(locator);
 builder.Services.AddSingleton<IProcessRunner, ProcessRunner>();
 builder.Services.AddSingleton<FfLib>();
 
-// Probing
+
 builder.Services.AddSingleton<IMediaProber, FfprobeProber>();
 
-// Sessions
+
 var sessOpts = new SessionStoreOptions
 {
     IdleTtl = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("Sessions:IdleTtlSeconds") ?? 3600),
@@ -39,7 +39,7 @@ builder.Services.AddSingleton(sessOpts);
 builder.Services.AddSingleton<SessionStore>(sp => new SessionStore(sp.GetRequiredService<SessionStoreOptions>()));
 builder.Services.AddHostedService<SessionPurgeService>();
 
-// Sync + Visual + Merging
+
 builder.Services.AddSingleton<AudioLoader>();
 builder.Services.AddSingleton<CutDetector>();
 builder.Services.AddSingleton<IVisualMatcher, VisualMatcher>();
@@ -69,7 +69,7 @@ app.Use(async (ctx, next) =>
     }
 });
 
-// Tool availability check (mirror of Python startup banner)
+
 {
     var log = app.Services.GetRequiredService<ILogger<Program>>();
     log.LogInformation("ffmpeg:   {Path}", locator.Ffmpeg ?? "NOT FOUND");
@@ -88,7 +88,7 @@ app.Use(async (ctx, next) =>
     }
 }
 
-// Serve wwwroot from embedded resources so the .exe is fully self-contained.
+
 var embeddedFiles = new ManifestEmbeddedFileProvider(typeof(Program).Assembly, "wwwroot");
 app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = embeddedFiles });
 app.UseStaticFiles(new StaticFileOptions { FileProvider = embeddedFiles });

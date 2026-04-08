@@ -5,10 +5,10 @@ using AudioSync.Core.Visual;
 
 namespace AudioSync.Core.Sync;
 
-/// <summary>
-/// Mirror of sync_engine.py — orchestrates decode → fingerprint →
-/// coarse xcorr → RANSAC → segment detection → optional visual fine-tune.
-/// </summary>
+
+
+
+
 public sealed class SyncEngine : ISyncEngine
 {
     private readonly FfLib _ff;
@@ -51,10 +51,10 @@ public sealed class SyncEngine : ISyncEngine
 
         var detected = ctx.Segments;
 
-        // Capture the RANSAC-refined offset before visual fine-tune may overwrite it.
+        
         ctx.RansacOffset = ctx.AlignB;
 
-        // Visual fine-tune (single-segment only)
+        
         if (_visual != null && ctx.V1HasVideo && ctx.V2HasVideo &&
             (detected == null || detected.Count <= 1))
         {
@@ -79,7 +79,7 @@ public sealed class SyncEngine : ISyncEngine
             }
         }
 
-        // V2 start-delay normalization
+        
         double v2St = 0.0;
         if (ctx.V2Info != null)
         {
@@ -103,10 +103,11 @@ public sealed class SyncEngine : ISyncEngine
         ctx.Atempo = SpeedToAtempo(ctx.AlignA);
         ctx.Offset = ctx.AlignB;
 
+        progressCallback?.Invoke("status", "Align completed.");
         return BuildAlignResult(ctx, detected);
     }
 
-    // ===== prepare =====
+    
 
     public void PrepareAlign(SessionContext ctx)
     {
@@ -126,7 +127,7 @@ public sealed class SyncEngine : ISyncEngine
         ctx.DecodeWarnings = new List<string>();
     }
 
-    // ===== decode + fingerprint =====
+    
 
     private async Task DecodeAndFingerprintAsync(
         SessionContext ctx, Action<string, string>? cb, CancellationToken ct)
@@ -191,7 +192,7 @@ public sealed class SyncEngine : ISyncEngine
         return (diffs[n / 2 - 1] + diffs[n / 2]) / 2;
     }
 
-    // ===== coarse alignment =====
+    
 
     private void ComputeCoarseAlignment(SessionContext ctx, Action<string, string>? cb, CancellationToken ct)
     {
@@ -202,7 +203,9 @@ public sealed class SyncEngine : ISyncEngine
         {
             cb?.Invoke("status", "Applying vocal bandreject filter...");
             xa1 = AudioLoader.BandReject(ctx.Audio1!, AudioConstants.AudioSampleRate);
+            ct.ThrowIfCancellationRequested();
             xa2 = AudioLoader.BandReject(ctx.Audio2!, AudioConstants.AudioSampleRate);
+            ct.ThrowIfCancellationRequested();
         }
         else
         {
@@ -211,13 +214,17 @@ public sealed class SyncEngine : ISyncEngine
         }
 
         var (ds1, dsRate) = CrossCorrelation.DownsampleAudio(xa1, AudioConstants.AudioSampleRate);
+        ct.ThrowIfCancellationRequested();
         var (ds2, _) = CrossCorrelation.DownsampleAudio(xa2, AudioConstants.AudioSampleRate);
+        ct.ThrowIfCancellationRequested();
         ctx.DsRate = dsRate;
 
         if (ctx.VocalFilter)
         {
             (ctx.Ds1Seg, _) = CrossCorrelation.DownsampleAudio(ctx.Audio1!, AudioConstants.AudioSampleRate);
+            ct.ThrowIfCancellationRequested();
             (ctx.Ds2Seg, _) = CrossCorrelation.DownsampleAudio(ctx.Audio2!, AudioConstants.AudioSampleRate);
+            ct.ThrowIfCancellationRequested();
         }
         else
         {
@@ -226,6 +233,7 @@ public sealed class SyncEngine : ISyncEngine
         }
 
         var x = CrossCorrelation.XcorrOnDownsampled(ds1, ds2, dsRate, AudioConstants.SpeedCandidates, returnAltOffsets: true);
+        ct.ThrowIfCancellationRequested();
         ctx.CoarseOffset = x.Offset;
         ctx.XcorrSpeed = x.Speed;
         ctx.AltOffsets = (x.AltOffsets ?? new()).Select(t => t.Offset).ToList();
@@ -242,7 +250,7 @@ public sealed class SyncEngine : ISyncEngine
         ct.ThrowIfCancellationRequested();
     }
 
-    // ===== RANSAC =====
+    
 
     private async Task<bool> AlignRansacAsync(SessionContext ctx, Action<string, string>? cb, CancellationToken ct)
     {
@@ -369,7 +377,7 @@ public sealed class SyncEngine : ISyncEngine
                     detected[i].V1Start = refined[i].V1Start;
                     detected[i].V1End = refined[i].V1End;
                 }
-                // Per-segment offset refinement (xcorr in segment range)
+                
                 for (int si = 0; si < detected.Count; si++)
                 {
                     var seg = detected[si];
@@ -426,7 +434,7 @@ public sealed class SyncEngine : ISyncEngine
         return true;
     }
 
-    // ===== finalize =====
+    
 
     private static double SpeedToAtempo(double a) => Math.Abs(a) > 1e-9 ? 1.0 / a : 1.0;
 
@@ -529,7 +537,7 @@ public sealed class SyncEngine : ISyncEngine
         ctx.Audio2 = null;
     }
 
-    /// <summary>Mirror of sync_engine.format_timestamp.</summary>
+    
     public static string FormatTimestamp(double? seconds)
     {
         if (!seconds.HasValue || double.IsNaN(seconds.Value)) return "0:00.000";
@@ -541,6 +549,67 @@ public sealed class SyncEngine : ISyncEngine
         double sec = s % 60;
         if (h > 0) return $"{sign}{h}:{m:D2}:{sec:00.000}";
         return $"{sign}{m}:{sec:00.000}";
+    }
+
+    public static string BuildAlignDetail(AlignmentResult r)
+    {
+        static string FmtSigned(double v) => $"{(v >= 0 ? "+" : "")}{v:0.000}s";
+        var sb = new System.Text.StringBuilder();
+        double aoSpd = r.AudioSpeed != 0 ? r.AudioSpeed : r.SpeedRatio;
+        double aoOff = r.AudioOffset;
+        sb.Append("Audio coarse offset: ").Append(FmtSigned(aoOff)).Append('\n');
+        if (r.RansacOffset.HasValue)
+            sb.Append("Audio fine offset:   ").Append(FmtSigned(r.RansacOffset.Value)).Append('\n');
+        if (r.VisualRefinedOffset.HasValue)
+            sb.Append("Visual fine offset:  ").Append(FmtSigned(r.VisualRefinedOffset.Value)).Append('\n');
+        sb.Append("Speed:               ").Append((1.0 / aoSpd).ToString("0.000000")).Append('\n');
+        if (r.V1Fps > 0 && r.V2Fps > 0)
+        {
+            sb.Append("Framerate:        V1=").Append(r.V1Fps.ToString("0.000"))
+              .Append("  V2=").Append(r.V2Fps.ToString("0.000"));
+            if (r.FpsAdjusted) sb.Append("  (atempo snapped to fps ratio)");
+            sb.Append('\n');
+        }
+        if (r.V2StartDelay > 0.01)
+            sb.Append("V2 start delay:   ").Append(r.V2StartDelay.ToString("0.000")).Append("s\n");
+        sb.Append(new string('\u2500', 38)).Append('\n');
+        sb.Append("V1 hop: ").Append(r.V1Interval.ToString("0.00"))
+          .Append("s  V2 hop: ").Append(r.V2Interval.ToString("0.00")).Append("s\n");
+        sb.Append("V1: ").Append(FormatTimestamp(r.V1Coverage.Lo))
+          .Append(" - ").Append(FormatTimestamp(r.V1Coverage.Hi)).Append('\n');
+        sb.Append("V2: ").Append(FormatTimestamp(r.V2Coverage.Lo))
+          .Append(" - ").Append(FormatTimestamp(r.V2Coverage.Hi)).Append('\n');
+        sb.Append("Residual: avg=").Append(r.ResidualMean.ToString("0.000"))
+          .Append("s max=").Append(r.ResidualMax.ToString("0.000")).Append("s\n");
+
+        var segs = r.Segments ?? new();
+        if (segs.Count > 1)
+        {
+            sb.Append(new string('\u2500', 38)).Append('\n');
+            sb.Append("SEGMENTS: ").Append(segs.Count).Append(" (content breaks detected)\n");
+            for (int i = 0; i < segs.Count; i++)
+            {
+                var s = segs[i];
+                string sEnd = double.IsPositiveInfinity(s.V1End) ? "end" : FormatTimestamp(s.V1End);
+                sb.Append("  #").Append(i + 1).Append(": ").Append(FormatTimestamp(s.V1Start))
+                  .Append(" - ").Append(sEnd)
+                  .Append("  offset=").Append(FmtSigned(s.Offset))
+                  .Append("  (").Append(s.NInliers).Append(" matches)\n");
+            }
+        }
+
+        sb.Append(new string('\u2500', 38)).Append('\n');
+        var pairs = r.InlierPairs ?? new();
+        int step = Math.Max(1, pairs.Count / 10);
+        sb.Append("        V1         V2    Sim\n");
+        for (int i = 0; i < pairs.Count; i += step)
+        {
+            var p = pairs[i];
+            sb.Append(FormatTimestamp(p.T1).PadLeft(10))
+              .Append(' ').Append(FormatTimestamp(p.T2).PadLeft(10))
+              .Append(' ').Append(p.Sim.ToString("0.000")).Append('\n');
+        }
+        return sb.ToString();
     }
 
     private static double Percentile(double[] sims, double p)

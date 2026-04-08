@@ -6,13 +6,13 @@ public sealed class FingerprintResult
     public double[][] Fingerprints { get; init; } = Array.Empty<double[]>();
 }
 
-/// <summary>
-/// Mirror of audio.py fingerprinting + matching helpers.
-/// All math runs in double; raw audio is the only float[] (input from ffmpeg).
-/// </summary>
+
+
+
+
 public static class Fingerprints
 {
-    /// <summary>Mirror of audio.build_mel_filterbank.</summary>
+    
     public static double[][] BuildMelFilterbank(int nFft, int sr,
         int nMels = AudioConstants.AudioNMels, double fmin = 60.0, double? fmax = null)
     {
@@ -44,7 +44,7 @@ public static class Fingerprints
         return fb;
     }
 
-    /// <summary>Mirror of audio.match_fingerprints (top-k by descending similarity).</summary>
+    
     public static List<(int I, int J, double Sim)> Match(
         double[][] fp1, double[][] fp2, int topK = AudioConstants.AudioMatchTopK)
     {
@@ -74,7 +74,7 @@ public static class Fingerprints
         return result;
     }
 
-    /// <summary>Mirror of audio.mutual_nearest_neighbors.</summary>
+    
     public static List<(int I, int J, double Sim)> MutualNearestNeighbors(
         List<(int I, int J, double Sim)> matches, int n1, int n2,
         int topK = AudioConstants.AudioMatchTopK)
@@ -102,10 +102,10 @@ public static class Fingerprints
         return filtered;
     }
 
-    /// <summary>
-    /// Mirror of audio._extract_fingerprints — windowed RFFT loop.
-    /// frameFn maps a magnitude spectrum to a fingerprint vector.
-    /// </summary>
+    
+    
+    
+    
     public static FingerprintResult Extract(
         float[] audio, int sr, int maxSamples, double hopSec, double windowSec,
         Func<double[], double[]> frameFn,
@@ -183,7 +183,7 @@ public static class Fingerprints
                 var row = fb[m];
                 int len = Math.Min(row.Length, spectrum.Length);
                 for (int k = 0; k < len; k++) sum += row[k] * spectrum[k];
-                fp[m] = Math.Log(1.0 + sum); // log1p
+                fp[m] = Math.Log(1.0 + sum); 
             }
             return fp;
         }

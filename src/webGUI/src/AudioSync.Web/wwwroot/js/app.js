@@ -1,10 +1,11 @@
+const VIDEO_EXTS = new Set(['.mp4', '.mkv', '.avi', '.mov', '.webm', '.ts', '.flv', '.wmv', '.m4v', '.mts', '.m2ts']);
+
 const state = {
     v1: { path: '', tracks: [], streams: [], duration: 0 },
     v2: { path: '', tracks: [], streams: [], duration: 0 },
     selected: { v1: {}, v2: {} },
     trackOverrides: {},
     defaultAudioIdx: null,
-    mergeParams: null,
     segments: null,
     containerChange: false,
     containerExt: '',
@@ -17,12 +18,14 @@ const state = {
 let _sessionId = null;
 let _viewId = 0;
 let _runningTaskId = null;
-let _runningTaskType = null;
-let _pollInterval = null;
 let _sessionCache = {};
 let _saveTimer = null;
 let _restoring = false;
-let _logCursor = 0;
+let _eventStream = null;
+const _logCursors = {};
+const _taskWatchers = {};
+const _taskFinished = {};
+const _taskCache = {};         
 
 function _buildUIState() {
     return {
@@ -54,18 +57,19 @@ function _buildUIState() {
 
 function _persistUIState(uiState) {
     if (!_sessionId) return;
-    if (_sessionCache[_sessionId]) {
-        _sessionCache[_sessionId].ui_state = { ...uiState };
+    const sid = _sessionId;
+    if (_sessionCache[sid]) {
+        _sessionCache[sid].ui_state = { ...uiState };
     }
-    fetch(`/api/session/${_sessionId}/state`, {
+    fetch(`/api/session/${sid}/state`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(uiState),
     }).then(r => r.json()).then(data => {
-        if (data.version !== undefined && _sessionCache[_sessionId]) {
-            _sessionCache[_sessionId].version = data.version;
+        if (data.version !== undefined && _sessionCache[sid]) {
+            _sessionCache[sid].version = data.version;
             if (data.label) {
-                _sessionCache[_sessionId].label = data.label;
+                _sessionCache[sid].label = data.label;
                 renderSessionList(_sessionCache);
             }
         }
@@ -84,52 +88,6 @@ function flushUIState() {
     clearTimeout(_saveTimer);
     if (_restoring || !_sessionId || !_sessionCache[_sessionId]) return;
     _persistUIState(_buildUIState());
-}
-
-function _postLogs(lines) {
-    if (_sessionId) {
-        fetch(`/api/session/${_sessionId}/logs`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ messages: lines }),
-        }).then(r => r.ok ? r.json() : null)
-          .then(data => {
-              if (data && data.log_idx) {
-                  _logCursor = Math.max(_logCursor, data.log_idx);
-                  const cache = _sessionCache[_sessionId];
-                  if (cache) cache.log_cursor = _logCursor;
-              }
-          }).catch(() => {});
-    }
-}
-
-function log(msg) {
-    const box = document.getElementById('log-box');
-    const ts = new Date().toLocaleTimeString();
-    const line = `[${ts}] ${msg}`;
-    box.value += line + '\n';
-    box.scrollTop = box.scrollHeight;
-    if (!_restoring && _sessionId && _sessionCache[_sessionId]) {
-        if (!_sessionCache[_sessionId].log_entries) _sessionCache[_sessionId].log_entries = [];
-        const entries = _sessionCache[_sessionId].log_entries;
-        entries.push(line);
-        if (entries.length > 500) entries.splice(0, entries.length - 500);
-        _postLogs([line]);
-    }
-}
-
-function logSeparator(label) {
-    const box = document.getElementById('log-box');
-    const line = `\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 ${label} \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500`;
-    box.value += '\n' + line + '\n';
-    box.scrollTop = box.scrollHeight;
-    if (!_restoring && _sessionId && _sessionCache[_sessionId]) {
-        if (!_sessionCache[_sessionId].log_entries) _sessionCache[_sessionId].log_entries = [];
-        const entries = _sessionCache[_sessionId].log_entries;
-        entries.push('', line);
-        if (entries.length > 500) entries.splice(0, entries.length - 500);
-        _postLogs(['', line]);
-    }
 }
 
 function formatTimestamp(sec) {
@@ -179,22 +137,18 @@ async function apiPost(url, data) {
     try { return await res.json(); } catch { return { error: 'Invalid JSON response' }; }
 }
 
-const _LOCK_EXEMPT_IDS = new Set(['global-stop', 'close-session-btn']);
+const _LOCK_EXEMPT_IDS = new Set(['task-stop', 'close-session-btn']);
 
-function lockButtons(runningType) {
+function lockButtons() {
     const root = document.querySelector('.app') || document.body;
     const els = root.querySelectorAll('input, select, textarea, button');
     els.forEach(el => {
         if (_LOCK_EXEMPT_IDS.has(el.id)) return;
-        el.dataset.prevDisabled = el.disabled ? '1' : '0';
+        if (el.dataset.prevDisabled === undefined)
+            el.dataset.prevDisabled = el.disabled ? '1' : '0';
         el.disabled = true;
     });
-    // Also lock session list (sidebar) so user can't switch sessions mid-task.
-    document.querySelectorAll('#session-list button, #session-list input').forEach(el => {
-        el.dataset.prevDisabled = el.disabled ? '1' : '0';
-        el.disabled = true;
-    });
-    document.getElementById('global-stop').classList.remove('hidden');
+    document.getElementById('task-stop').classList.remove('hidden');
 }
 
 function unlockButtons() {
@@ -203,23 +157,9 @@ function unlockButtons() {
         el.disabled = el.dataset.prevDisabled === '1';
         delete el.dataset.prevDisabled;
     });
-    document.getElementById('global-stop').classList.add('hidden');
+    document.getElementById('task-stop').classList.add('hidden');
 }
 
-// Logs are pushed via SSE (see _logStream below). This stub remains so the
-// existing call sites don't need refactoring; it's a no-op now.
-function _fetchAndDisplayLogs() { return Promise.resolve(); }
-
-// =====================================================================
-// Server-Sent Events: single multiplexed stream for log entries AND task
-// state changes across ALL sessions. No client-side polling for progress.
-// =====================================================================
-let _eventStream = null;
-const _logCursors = {};        // sid → highest log idx seen
-const _taskWatchers = {};      // tid → { onUpdate, onDone }
-const _taskFinished = {};      // tid → true (so a watcher registered after
-                               //   the terminal event still fires onDone)
-const _taskCache = {};         // tid → last task event seen (for replay/init)
 
 function _ensureLogStream() {
     if (_eventStream) return;
@@ -229,10 +169,7 @@ function _ensureLogStream() {
             const m = JSON.parse(ev.data);
             if (m.kind === 'log') return _handleLogEvent(m);
             if (m.kind === 'task') return _handleTaskEvent(m);
-        } catch (e) { /* ignore malformed event */ }
-    };
-    _eventStream.onerror = () => {
-        // EventSource auto-reconnects; nothing to do here
+        } catch (e) {  }
     };
 }
 
@@ -258,7 +195,6 @@ function _handleLogEvent(m) {
         const box = document.getElementById('log-box');
         box.value += line + '\n';
         box.scrollTop = box.scrollHeight;
-        _logCursor = idx;
     }
 }
 
@@ -271,7 +207,6 @@ function _handleTaskEvent(m) {
         _taskFinished[m.tid] = m;
         if (_runningTaskId === m.tid) {
             _runningTaskId = null;
-            _runningTaskType = null;
         }
         if (w) {
             delete _taskWatchers[m.tid];
@@ -280,24 +215,22 @@ function _handleTaskEvent(m) {
     }
 }
 
-// Replaces the old startPoll. Registers handlers; the SSE event loop dispatches.
+
 function watchTask(taskType, taskId, onUpdate, onDone) {
     _ensureLogStream();
     _runningTaskId = taskId;
-    _runningTaskType = taskType;
-    // If the SSE has already delivered a terminal event for this task, fire
-    // onDone immediately (handles fast tasks that finish before we register).
+
+
     const fin = _taskFinished[taskId];
     if (fin) {
         delete _taskFinished[taskId];
         _runningTaskId = null;
-        _runningTaskType = null;
         try { onDone(fin); } catch (e) { console.error(e); }
         return;
     }
     _taskWatchers[taskId] = { onUpdate, onDone };
-    // If a running snapshot was already cached, replay it once so handlers
-    // can initialize their UI from the latest known state.
+    
+    
     const cached = _taskCache[taskId];
     if (cached && cached.status === 'running') {
         try { onUpdate(cached); } catch (e) { console.error(e); }
@@ -305,67 +238,89 @@ function watchTask(taskType, taskId, onUpdate, onDone) {
 }
 
 function stopPoll() {
-    if (_runningTaskId) delete _taskWatchers[_runningTaskId];
+    if (_runningTaskId) {
+        delete _taskWatchers[_runningTaskId];
+        delete _taskFinished[_runningTaskId];
+    }
     _runningTaskId = null;
-    _runningTaskType = null;
 }
 
 async function cancelRunningTask() {
     if (!_sessionId || !_runningTaskId) return;
-    const taskType = _runningTaskType;
     await fetch(`/api/session/${_sessionId}/task/${_runningTaskId}/cancel`, { method: 'POST' });
-    log(`[${taskType}] Cancel requested`);
 }
 
-function resetUI() {
-    document.getElementById('v1-path-input').value = '';
-    document.getElementById('v2-path-input').value = '';
-    document.getElementById('out-path-input').value = '';
-    document.getElementById('out-path-input').dataset.lastAutoPath = '';
-    document.getElementById('v1-file-info').textContent = '';
-    document.getElementById('v2-file-info').textContent = '';
-    document.getElementById('v1-tracks').innerHTML = '<span class="text-dim text-sm">Load Video 1...</span>';
-    document.getElementById('v2-tracks').innerHTML = '<span class="text-dim text-sm">Load Video 2...</span>';
-    for (const n of [1, 2]) {
-        document.getElementById(`v${n}-sync-track`).innerHTML = '<option value="0">0: (default)</option>';
+function resetVideoSlot(n) {
+    state[`v${n}`] = { path: '', tracks: [], streams: [], duration: 0 };
+    state.selected[`v${n}`] = {};
+    for (const key of Object.keys(state.trackOverrides)) {
+        if (key.startsWith(`v${n}_`)) delete state.trackOverrides[key];
     }
-    document.getElementById('align-progress').classList.remove('progress-indeterminate');
-    setProgress('align-progress', 0, '');
-    document.querySelector('input[name="container-fmt"][value="mkv"]').checked = true;
+    if (n === 2) state.v2Lufs = null;
+    if (n === 1) state.v1Lufs = null;
+    document.getElementById(`v${n}-path-input`).value = '';
+    document.getElementById(`v${n}-file-info`).textContent = '';
+    document.getElementById(`v${n}-tracks`).innerHTML = `<span class="text-dim text-sm">Load Video ${n}...</span>`;
+    document.getElementById(`v${n}-sync-track`).innerHTML = '<option value="0">0: (default)</option>';
+}
+
+function resetAlignParams() {
     document.getElementById('atempo-input').value = '1.000000';
     document.getElementById('offset-input').value = '0.000';
     state.offsetEdited = false;
     state.atempoEdited = false;
+}
+
+function resetResultsPanel() {
     for (const k of ['r-mode','r-atempo','r-offset','r-inliers','r-fit','r-precision','r-visual']) {
         const el = document.getElementById(k);
         el.textContent = '-';
         el.style.color = '';
     }
     document.getElementById('results-detail').value = '';
+}
+
+function resetSegmentsUI() {
+    state.segments = null;
+    state.defaultAudioIdx = null;
     document.getElementById('segment-overrides').innerHTML = '';
-    setProgress('merge-progress', 0, '');
+    document.getElementById('global-offset-row').style.display = '';
+}
+
+function resetProgressBar() {
+    document.getElementById('task-progress').classList.remove('progress-indeterminate');
+    setProgress('task-progress', 0, '');
+}
+
+function resetGainMatch() {
+    const cb = document.getElementById('gain-match-cb');
+    cb.disabled = true;
+    cb.checked = false;
+    const lbl = document.getElementById('gain-match-label');
+    lbl.title = 'Loudness must be measured first!';
+    lbl.style.opacity = '0.5';
+}
+
+function resetUI() {
+    resetVideoSlot(1);
+    resetVideoSlot(2);
+    document.getElementById('out-path-input').value = '';
+    document.getElementById('out-path-input').dataset.lastAutoPath = '';
+    document.querySelector('input[name="container-fmt"][value="mkv"]').checked = true;
+    resetAlignParams();
+    resetResultsPanel();
+    resetSegmentsUI();
+    resetProgressBar();
     document.getElementById('log-box').value = '';
-    document.getElementById('gain-match-cb').disabled = true;
-    document.getElementById('gain-match-cb').checked = false;
-    document.getElementById('gain-match-label').title = 'Loudness must be measured first!';
-    document.getElementById('gain-match-label').style.opacity = '0.5';
+    resetGainMatch();
     unlockButtons();
     updateMergeButton();
     updateSyncPanels();
 }
 
 function resetState() {
-    state.v1 = { path: '', tracks: [], streams: [], duration: 0 };
-    state.v2 = { path: '', tracks: [], streams: [], duration: 0 };
-    state.selected = { v1: {}, v2: {} };
-    state.trackOverrides = {};
-    state.defaultAudioIdx = null;
-    state.mergeParams = null;
-    state.segments = null;
     state.containerChange = false;
     state.containerExt = '';
-    state.v1Lufs = null;
-    state.v2Lufs = null;
 }
 
 async function loadVideo(n) {
@@ -375,25 +330,13 @@ async function loadVideo(n) {
 
     const fileInfo = document.getElementById(`v${n}-file-info`);
     fileInfo.textContent = 'Probing...';
-    log(`[V${n}] Probing ${basename(filepath)}...`);
 
-    const result = await apiPost('/api/probe', { filepath });
+    await ensureSession();
+    const result = await apiPost('/api/probe', { filepath, sid: _sessionId, slot: n });
     if (result.error) {
         fileInfo.textContent = 'Error';
-        log(`[V${n}] Probe error: ${result.error}`);
         return;
     }
-    if (result.warning) {
-        log(`[V${n}] ${result.warning}`);
-    }
-
-    const streamCounts = (result.streams || []).reduce((acc, s) => {
-        acc[s.codec_type] = (acc[s.codec_type] || 0) + 1;
-        return acc;
-    }, {});
-    const countStr = Object.entries(streamCounts).map(([k,v]) => `${v} ${k}`).join(', ');
-    log(`[V${n}] ${basename(filepath)}: ${countStr}, ${result.duration_fmt}`);
-
     state[`v${n}`] = {
         path: filepath,
         tracks: result.tracks,
@@ -406,9 +349,6 @@ async function loadVideo(n) {
     if (n === 1) {
         state.containerChange = result.container_change;
         state.containerExt = result.container_ext;
-        if (result.container_change) {
-            log(`[V1] Container '${result.container_ext}' does not support multi-audio, output will use .mkv`);
-        }
         updateOutputPathIfDefault();
     }
 
@@ -426,63 +366,27 @@ async function testInterleave() {
     if (_runningTaskId) { alert('A task is running. Stop it first.'); return; }
 
     await ensureSession();
-    log('[Test] Analysing interleave structure...');
-    lockButtons('test');
+    lockButtons();
 
     const result = await apiPost(`/api/session/${_sessionId}/test-interleave`, { filepath });
     if (result.error) {
-        log(`[Test] Error: ${result.error}`);
         unlockButtons();
         return;
     }
 
     watchTask('test', result.task_id,
-        (task) => {},
-        (task) => {
-            unlockButtons();
-            if (task.status === 'done' && task.result) {
-                for (const line of task.result.lines) {
-                    log(`[Test] ${line}`);
-                }
-            } else if (task.status === 'cancelled') {
-                log('[Test] Cancelled.');
-            } else {
-                log(`[Test] Error: ${task.error || 'Unknown error'}`);
-            }
-        }
+        () => {},
+        () => { unlockButtons(); }
     );
 }
 
 async function clearVideo2() {
     if (_runningTaskId) { alert('A task is running. Stop it first.'); return; }
-    state.v2 = { path: '', tracks: [], streams: [], duration: 0 };
-    state.selected.v2 = {};
-    state.mergeParams = null;
-    state.segments = null;
-    state.v2Lufs = null;
-    state.defaultAudioIdx = null;
-    // Remove V2 track overrides
-    for (const key of Object.keys(state.trackOverrides)) {
-        if (key.startsWith('v2_')) delete state.trackOverrides[key];
-    }
-    document.getElementById('v2-path-input').value = '';
-    document.getElementById('v2-file-info').textContent = '';
-    document.getElementById('v2-tracks').innerHTML = '<span class="text-dim text-sm">Load Video 2...</span>';
-    document.getElementById('v2-sync-track').innerHTML = '<option value="0">0: (default)</option>';
-    document.getElementById('atempo-input').value = '1.000000';
-    document.getElementById('offset-input').value = '0.000';
-    state.offsetEdited = false;
-    state.atempoEdited = false;
-    document.getElementById('segment-overrides').innerHTML = '';
-    document.getElementById('global-offset-row').style.display = '';
-    for (const k of ['r-mode','r-atempo','r-offset','r-inliers','r-fit','r-precision','r-visual']) {
-        const el = document.getElementById(k);
-        el.textContent = '-';
-        el.style.color = '';
-    }
-    document.getElementById('results-detail').value = '';
-    document.getElementById('align-progress').classList.remove('progress-indeterminate');
-    setProgress('align-progress', 0, '');
+    resetVideoSlot(2);
+    resetAlignParams();
+    resetResultsPanel();
+    resetSegmentsUI();
+    resetProgressBar();
     updateOutputPathIfDefault();
     updateMergeButton();
     updateSyncPanels();
@@ -490,7 +394,6 @@ async function clearVideo2() {
         await ensureSession();
         saveUIState();
     }
-    log('[V2] Cleared');
 }
 
 function streamLabel(s) {
@@ -538,12 +441,12 @@ function fillStreamPanel(n) {
     selAll.textContent = 'Select all';
     selAll.href = '#';
     selAll.style.color = 'var(--ac)';
-    selAll.addEventListener('click', e => { e.preventDefault(); container.querySelectorAll('input[type=checkbox]').forEach(cb => { const si = parseInt(cb.dataset.si); cb.checked = true; sel[si] = true; }); saveUIState(); });
+    selAll.addEventListener('click', e => { e.preventDefault(); container.querySelectorAll('input[type=checkbox]').forEach(cb => { if (cb.disabled) return; const si = parseInt(cb.dataset.si); cb.checked = true; sel[si] = true; }); saveUIState(); });
     const selNone = document.createElement('a');
     selNone.textContent = 'Select none';
     selNone.href = '#';
     selNone.style.color = 'var(--ac)';
-    selNone.addEventListener('click', e => { e.preventDefault(); container.querySelectorAll('input[type=checkbox]').forEach(cb => { const si = parseInt(cb.dataset.si); cb.checked = false; sel[si] = false; }); saveUIState(); });
+    selNone.addEventListener('click', e => { e.preventDefault(); container.querySelectorAll('input[type=checkbox]').forEach(cb => { if (cb.disabled) return; const si = parseInt(cb.dataset.si); cb.checked = false; sel[si] = false; }); saveUIState(); });
     selBar.appendChild(selAll);
     selBar.appendChild(selNone);
     container.appendChild(selBar);
@@ -606,8 +509,7 @@ function getSelectedIndices(n, codecType) {
     const sel = state.selected[`v${n}`] || {};
     const streams = state[`v${n}`].streams || [];
     if (!codecType) {
-        const selected = Object.entries(sel).filter(([_, v]) => v).map(([k]) => parseInt(k)).filter(x => !isNaN(x)).sort((a, b) => a - b);
-        // Always include video streams (not shown in UI checkboxes)
+        const selected = Object.entries(sel).filter(([_, v]) => v).map(([k]) => parseInt(k)).filter(x => !isNaN(x));
         const videoIndices = streams.filter(s => s.codec_type === 'video').map(s => s.stream_index);
         for (const vi of videoIndices) {
             if (!selected.includes(vi)) selected.push(vi);
@@ -649,10 +551,8 @@ async function runAlign() {
     await ensureSession();
     const myView = ++_viewId;
 
-    lockButtons('align');
-    setProgress('align-progress', 0, '0%');
-    logSeparator('Align');
-    log('[Align] Starting...');
+    lockButtons();
+    setProgress('task-progress', 0, '0%');
 
     const t1 = parseInt(document.getElementById('v1-sync-track').value) || 0;
     const t2 = parseInt(document.getElementById('v2-sync-track').value) || 0;
@@ -677,8 +577,7 @@ async function runAlign() {
 
     if (result.error) {
         unlockButtons();
-        setProgress('align-progress', 0, '');
-        log(`[Align] Error: ${result.error}`);
+        setProgress('task-progress', 0, '');
         return;
     }
 
@@ -688,22 +587,14 @@ async function runAlign() {
         (task) => {
             if (_viewId !== myView) return;
             if (typeof task.percent === 'number' && task.percent >= 0)
-                setProgress('align-progress', task.percent);
+                setProgress('task-progress', task.percent);
         },
         (task) => {
             if (_viewId !== myView) return;
             unlockButtons();
-            setProgress('align-progress', task.status === 'done' ? 100 : 0, task.status === 'done' ? 'Done' : '');
+            setProgress('task-progress', task.status === 'done' ? 100 : 0, task.status === 'done' ? 'Done' : '');
             if (task.status === 'done') {
                 showAlignResults(task.result);
-                if (task.result.warnings && task.result.warnings.length > 0) {
-                    for (const w of task.result.warnings)
-                        log(`[Align] WARNING: ${w}`);
-                }
-                const sr = task.result.speed_ratio, off = task.result.offset;
-                log(`[Align] Done: ${task.result.inlier_count} inliers, atempo=${sr != null ? sr.toFixed(6) : '?'}, offset=${off != null ? off.toFixed(3) : '?'}s`);
-            } else {
-                log(`[Align] ${task.status}: ${task.error || ''}`);
             }
             refreshSessionList();
         }
@@ -719,7 +610,6 @@ function showAlignResults(r) {
     state.v1Lufs = r.v1_lufs ?? null;
     state.v2Lufs = r.v2_lufs ?? null;
     if (state.v1Lufs != null && state.v2Lufs != null) {
-        log(`[Align] Loudness: V1=${state.v1Lufs.toFixed(1)} LUFS, V2=${state.v2Lufs.toFixed(1)} LUFS (delta=${(state.v1Lufs - state.v2Lufs).toFixed(1)} dB)`);
         document.getElementById('gain-match-cb').disabled = false;
         const gml = document.getElementById('gain-match-label');
         gml.title = '';
@@ -764,116 +654,7 @@ function showAlignResults(r) {
     state.segments = r.segments || null;
     renderSegmentOverrides();
 
-    const detail = document.getElementById('results-detail');
-    const v1c = r.v1_coverage || [0,0], v2c = r.v2_coverage || [0,0];
-    const v1i = r.v1_interval || 0, v2i = r.v2_interval || 0;
-
-    const aoSpd = r.audio_speed || at;
-    const aoOff = r.audio_offset !== undefined ? r.audio_offset : off;
-    const fmt = (v) => `${v >= 0 ? '+' : ''}${v.toFixed(3)}s`;
-    let txt = `Audio coarse offset: ${fmt(aoOff)}\n`;
-    if (r.ransac_offset != null) {
-        txt += `Audio fine offset:   ${fmt(r.ransac_offset)}\n`;
-    }
-    if (r.visual_refined_offset != null) {
-        txt += `Visual fine offset:  ${fmt(r.visual_refined_offset)}\n`;
-    }
-    txt += `Speed:               ${(1.0/aoSpd).toFixed(6)}\n`;
-    if (r.v1_fps > 0 && r.v2_fps > 0) {
-        const v1f = r.v1_fps > 0 ? r.v1_fps.toFixed(3) : '?';
-        const v2f = r.v2_fps > 0 ? r.v2_fps.toFixed(3) : '?';
-        txt += `Framerate:        V1=${v1f}  V2=${v2f}`;
-        if (r.fps_adjusted) txt += '  (atempo snapped to fps ratio)';
-        txt += '\n';
-    }
-    if (r.v2_start_delay > 0.01) {
-        txt += `V2 start delay:   ${r.v2_start_delay.toFixed(3)}s\n`;
-    }
-    txt += '\u2500'.repeat(38) + '\n';
-    txt += `V1 hop: ${v1i.toFixed(2)}s  V2 hop: ${v2i.toFixed(2)}s\n`;
-    txt += `V1: ${formatTimestamp(v1c[0])} - ${formatTimestamp(v1c[1])}\n`;
-    txt += `V2: ${formatTimestamp(v2c[0])} - ${formatTimestamp(v2c[1])}\n`;
-    txt += `Residual: avg=${rmean.toFixed(3)}s max=${rmax.toFixed(3)}s\n`;
-
-    const segs = r.segments || [];
-    if (segs.length > 1) {
-        txt += '\u2500'.repeat(38) + '\n';
-        txt += `SEGMENTS: ${segs.length} (content breaks detected)\n`;
-        for (let i = 0; i < segs.length; i++) {
-            const s = segs[i];
-            const sEnd = s.v1_end >= 1e9 ? 'end' : formatTimestamp(s.v1_end);
-            txt += `  #${i+1}: ${formatTimestamp(s.v1_start)} - ${sEnd}  offset=${s.offset >= 0 ? '+' : ''}${s.offset.toFixed(3)}s  (${s.n_inliers} matches)\n`;
-        }
-    }
-
-    txt += '\u2500'.repeat(38) + '\n';
-    const pairs = r.inlier_pairs || [];
-    const step = Math.max(1, Math.floor(pairs.length / 10));
-    txt += `${'V1'.padStart(10)} ${'V2'.padStart(10)} ${'Sim'.padStart(6)}\n`;
-    for (let i = 0; i < pairs.length; i += step) {
-        const [t1, t2, sim] = pairs[i];
-        txt += `${formatTimestamp(t1).padStart(10)} ${formatTimestamp(t2).padStart(10)} ${sim.toFixed(3)}\n`;
-    }
-    detail.value = txt;
-
-    const segMsg = segs.length > 1 ? ` (${segs.length} segments)` : '';
-    log(`[Align] Alignment complete${segMsg}`);
-}
-
-function reorderAudioTracks(metadata, defaultIdx) {
-    if (metadata.length <= 1) return { sorted: metadata, order: metadata.map((_, i) => i) };
-    const defIdx = (defaultIdx != null && defaultIdx < metadata.length) ? defaultIdx : 0;
-    const defLang = metadata[defIdx].language || 'und';
-    const defGroup = [];
-    const rest = [];
-    for (let i = 0; i < metadata.length; i++) {
-        if (i === defIdx) {
-            defGroup.unshift({ meta: metadata[i], orig: i });
-        } else if ((metadata[i].language || 'und') === defLang) {
-            defGroup.push({ meta: metadata[i], orig: i });
-        } else {
-            rest.push({ meta: metadata[i], orig: i });
-        }
-    }
-    rest.sort((a, b) => {
-        const na = LANG_NAMES[a.meta.language] || a.meta.language || '';
-        const nb = LANG_NAMES[b.meta.language] || b.meta.language || '';
-        return na.localeCompare(nb);
-    });
-    const combined = [...defGroup, ...rest];
-    return { sorted: combined.map(e => e.meta), order: combined.map(e => e.orig) };
-}
-
-function prepareMerge(atempo, offset) {
-    const v1 = state.v1.path, v2 = state.v2.path;
-    if (!v1) return;
-    const outInput = document.getElementById('out-path-input').value.trim();
-    const outPath = outInput || getDefaultOutputPath();
-    const v1StreamIndices = getSelectedIndices(1);
-    const metadata = collectMetadata(1, 'audio');
-    const sub_metadata = collectMetadata(1, 'subtitle');
-    const v1_vid_metadata = collectMetadata(1, 'video');
-
-    if (isRemuxMode()) {
-        const { sorted: sortedMeta, order: audioOrder } = reorderAudioTracks(metadata, state.defaultAudioIdx);
-        const params = { v1_path: v1, out_path: outPath, v1_stream_indices: v1StreamIndices, v1_duration: state.v1.duration, v1_streams: state.v1.streams, v1_tracks: state.v1.tracks, metadata: sortedMeta, sub_metadata, v1_vid_metadata, default_audio: 0, audio_order: audioOrder, v1_has_attachments: getSelectedIndices(1, 'attachment').length > 0 };
-        state.mergeParams = params;
-        log(`[Remux] Ready \u2192 ${basename(outPath)}`);
-        return;
-    }
-    const v2AudioMeta = collectMetadata(2, 'audio');
-    const allAudioMeta = [...metadata, ...v2AudioMeta];
-    const v2StreamIndices = getSelectedIndices(2);
-    const v2_sub_metadata = collectMetadata(2, 'subtitle');
-    const { sorted: sortedMeta, order: audioOrder } = reorderAudioTracks(allAudioMeta, state.defaultAudioIdx);
-    const gainMatch = document.getElementById('gain-match-cb').checked;
-    const params = { v1_path: v1, v2_path: v2, out_path: outPath, atempo, offset, v1_stream_indices: v1StreamIndices, v2_stream_indices: v2StreamIndices, v2_sub_metadata, v1_duration: state.v1.duration, v1_streams: state.v1.streams, v1_tracks: state.v1.tracks, v2_streams: state.v2.streams, v2_tracks: state.v2.tracks, metadata: sortedMeta, sub_metadata, v1_vid_metadata, default_audio: 0, audio_order: audioOrder, gain_match: gainMatch, v1_lufs: state.v1Lufs, v2_lufs: state.v2Lufs, v1_has_attachments: getSelectedIndices(1, 'attachment').length > 0, v2_has_attachments: getSelectedIndices(2, 'attachment').length > 0 };
-    if (state.segments && state.segments.length > 1) {
-        params.segments = state.segments;
-    }
-    state.mergeParams = params;
-    const segMsg = (state.segments && state.segments.length > 1) ? ` (${state.segments.length} segments)` : '';
-    log(`[Merge] Ready: atempo=${atempo.toFixed(6)}, offset=${offset.toFixed(3)}s${segMsg} \u2192 ${basename(outPath)}`);
+    document.getElementById('results-detail').value = r.detail_text || '';
 }
 
 function renderSegmentOverrides() {
@@ -898,51 +679,20 @@ function renderSegmentOverrides() {
     container.innerHTML = html;
 }
 
-function updateParams() {
-    if (isRemuxMode()) {
-        prepareMerge(1.0, 0);
-        log('[Remux] Parameters updated');
-        saveUIState();
-        return;
-    }
-    const at = parseFloat(document.getElementById('atempo-input').value);
-    const off = parseFloat(document.getElementById('offset-input').value);
-    if (isNaN(at) || isNaN(off)) { alert('Enter valid numbers.'); return; }
-    const segInputs = document.querySelectorAll('.seg-offset-input');
-    if (segInputs.length > 0 && state.segments && state.segments.length > 1) {
-        for (const inp of segInputs) {
-            const idx = parseInt(inp.dataset.seg);
-            const val = parseFloat(inp.value);
-            if (isNaN(val)) { alert(`Invalid offset for segment #${idx+1}.`); return; }
-            state.segments[idx].offset = val;
-        }
-    }
-    prepareMerge(at, off);
-    log('[Merge] Parameters updated');
-    saveUIState();
-}
-
-function startMergePoll(taskType, taskId, myView, initialProgress) {
-    const isRemux = taskType === 'remux';
-    const taskLabel = isRemux ? 'Remux' : 'Merge';
-    // Server computes percent (0..100) on every progress event; client just renders it.
+function startMergePoll(taskType, taskId, myView) {
     watchTask(taskType, taskId,
         (task) => {
             if (_viewId !== myView) return;
             if (typeof task.percent === 'number' && task.percent >= 0)
-                setProgress('merge-progress', task.percent);
+                setProgress('task-progress', task.percent);
         },
         (task) => {
             if (_viewId !== myView) return;
             unlockButtons();
             if (task.status === 'done') {
-                setProgress('merge-progress', 100, 'Done');
-                log(`[${taskLabel}] Completed in ${task.result.elapsed} \u2192 ${task.result.output}`);
-                state.mergeParams = null;
-                alert('Output file created!\n' + task.result.output);
+                setProgress('task-progress', 100, 'Done');
             } else {
-                setProgress('merge-progress', 0, '');
-                log(`[${taskLabel}] ${task.status}: ${task.error || ''}`);
+                setProgress('task-progress', 0, '');
             }
             refreshSessionList();
         }
@@ -960,7 +710,6 @@ async function runMerge(durationLimit) {
 
     if (remux) {
         if (!state.v1.path) { alert('Load Video 1 first.'); return; }
-        prepareMerge(1.0, 0);
     } else {
         const at = parseFloat(document.getElementById('atempo-input').value);
         const off = parseFloat(document.getElementById('offset-input').value);
@@ -968,7 +717,6 @@ async function runMerge(durationLimit) {
             alert('Run Auto-Align first or enter valid values, and load both videos.');
             return;
         }
-        // Pick up any per-segment offset edits from inputs (formerly Update Parameters).
         const segInputs = document.querySelectorAll('.seg-offset-input');
         if (segInputs.length > 0 && state.segments && state.segments.length > 1) {
             for (const inp of segInputs) {
@@ -978,7 +726,6 @@ async function runMerge(durationLimit) {
                 state.segments[idx].offset = val;
             }
         }
-        prepareMerge(at, off);
         if (getSelectedIndices(2, 'audio').length === 0) { alert('Select at least one V2 audio track.'); return; }
     }
 
@@ -989,31 +736,29 @@ async function runMerge(durationLimit) {
             ? currentOutPath.slice(0, dot) + '.sample' + currentOutPath.slice(dot)
             : currentOutPath + '.sample';
     }
-    if (state.mergeParams) {
-        state.mergeParams.out_path = currentOutPath;
-        state.mergeParams.duration_limit = isSample ? durationLimit : null;
-    }
 
     if (!remux && state.containerChange && !confirm(`Container '${state.containerExt}' doesn't support multi-audio.\nOutput will use .mkv.\n\nContinue?`)) return;
 
-    const existsResult = await apiPost('/api/file-exists', { path: state.mergeParams.out_path });
+    const existsResult = await apiPost('/api/file-exists', { path: currentOutPath });
     if (existsResult.exists) {
-        if (!confirm(`Output file already exists:\n${basename(state.mergeParams.out_path)}\n\nOverwrite?`)) return;
+        if (!confirm(`Output file already exists:\n${basename(currentOutPath)}\n\nOverwrite?`)) return;
     } else {
         const msg = remux ? 'Remux the file now?' : 'Merge the audio tracks now?';
         if (!confirm(msg)) return;
     }
 
     await ensureSession();
+    flushUIState();
     const myView = ++_viewId;
 
-    lockButtons('merge');
-    setProgress('merge-progress', 0, '');
-    const taskLabel = isSample ? 'Sample' : (remux ? 'Remux' : 'Merge');
-    logSeparator(taskLabel);
-    log(`[${taskLabel}] Starting${isSample ? ` (\u2248 ${Math.round(durationLimit/60)} min)` : ''}...`);
+    lockButtons();
+    setProgress('task-progress', 0, '');
 
-    const body = { ...state.mergeParams };
+    const body = {};
+    if (isSample) {
+        body.duration_limit = durationLimit;
+        body.out_path = currentOutPath;
+    }
     const endpoint = remux ? 'remux' : 'merge';
     const result = await apiPost(`/api/session/${_sessionId}/${endpoint}`, body);
 
@@ -1021,7 +766,6 @@ async function runMerge(durationLimit) {
 
     if (result.error) {
         unlockButtons();
-        log(`[${taskLabel}] Error: ${result.error}`);
         return;
     }
 
@@ -1029,7 +773,6 @@ async function runMerge(durationLimit) {
     startMergePoll(remux ? 'remux' : 'merge', result.task_id, myView);
 }
 
-const VIDEO_EXTS = new Set(['.mp4','.mkv','.avi','.mov','.webm','.ts','.flv','.wmv','.m4v','.mts','.m2ts']);
 
 async function browseServer(n) {
     const overlay = document.createElement('div');
@@ -1353,10 +1096,6 @@ function openMetadataEditor(title, tracks) {
         overlay.remove();
         if (state.v1.streams.length) fillStreamPanel(1);
         if (state.v2.streams.length) fillStreamPanel(2);
-        const at = parseFloat(document.getElementById('atempo-input').value);
-        const off = parseFloat(document.getElementById('offset-input').value);
-        if (!isNaN(at) && !isNaN(off)) prepareMerge(at, off);
-        log(`[Metadata] Updated ${Object.keys(state.trackOverrides).length} track(s)`);
         saveUIState();
     });
 }
@@ -1402,7 +1141,6 @@ function openDefaultAudioEditor() {
         const sel = overlay.querySelector('input[name="default-audio"]:checked');
         state.defaultAudioIdx = sel ? parseInt(sel.value) : 0;
         overlay.remove();
-        log(`[Default Audio] Track ${state.defaultAudioIdx} selected as default`);
         saveUIState();
     });
 }
@@ -1417,13 +1155,13 @@ document.getElementById('v2-path-input').addEventListener('keydown', (e) => { if
 async function newSession() {
     clearTimeout(_saveTimer);
     stopPoll();
+    unlockButtons();
     ++_viewId;
     _sessionId = null;
     sessionStorage.removeItem('audiosync_session');
     resetUI();
     resetState();
     renderSessionList(_sessionCache);
-    log('Ready.');
 }
 
 async function closeSession() {
@@ -1431,6 +1169,7 @@ async function closeSession() {
     if (!_sessionId) return;
     if (_runningTaskId) {
         if (!confirm('A task is currently running. Stop it and close this session?')) return;
+        await cancelRunningTask();
     }
     const sid = _sessionId;
     await fetch(`/api/session/${sid}`, { method: 'DELETE' });
@@ -1442,12 +1181,13 @@ async function closeSession() {
     resetUI();
     resetState();
     renderSessionList(_sessionCache);
-    log(`Session closed.`);
 }
 
 async function switchToSession(sid, sess) {
     flushUIState();
     stopPoll();
+    unlockButtons();
+    setProgress('task-progress', 0, '');
     _restoring = true;
     const myView = ++_viewId;
     _sessionId = sid;
@@ -1456,8 +1196,8 @@ async function switchToSession(sid, sess) {
     resetState();
     renderSessionList(_sessionCache);
 
-    // Logs are continuously pushed via SSE into _sessionCache[sid].log_entries
-    // for every session, so on switch we just render the cached buffer.
+    
+    
     const cached = _sessionCache[sid];
     _logCursor = (cached && cached.log_cursor) || 0;
     if (cached && cached.log_entries && cached.log_entries.length) {
@@ -1485,7 +1225,7 @@ async function switchToSession(sid, sess) {
         }
     }
 
-    /* --- Load videos from ui_state (or fall back to task params) --- */
+    
     const v1Path = ui.v1_path || _extractFromTasks(sess, 'v1_path');
     const v2Path = ui.v2_path || _extractFromTasks(sess, 'v2_path');
 
@@ -1513,9 +1253,9 @@ async function switchToSession(sid, sess) {
     updateMergeButton();
     updateSyncPanels();
 
-    /* --- Restore all UI state --- */
+    
 
-    // Stream selections
+    
     if (ui.selected) {
         for (const n of ['v1', 'v2']) {
             for (const [si, val] of Object.entries(ui.selected[n] || {}))
@@ -1530,25 +1270,25 @@ async function switchToSession(sid, sess) {
         }
     }
 
-    // Track metadata overrides
+    
     if (ui.track_overrides && Object.keys(ui.track_overrides).length) {
         state.trackOverrides = { ...ui.track_overrides };
         if (state.v1.streams.length) fillStreamPanel(1);
         if (state.v2.streams.length) fillStreamPanel(2);
     }
 
-    // Default audio track
+    
     if (ui.default_audio_idx !== undefined && ui.default_audio_idx !== null) {
         state.defaultAudioIdx = ui.default_audio_idx;
     }
 
-    // Container format
+    
     if (ui.container_fmt) {
         const radio = document.querySelector(`input[name="container-fmt"][value="${ui.container_fmt}"]`);
         if (radio) radio.checked = true;
     }
 
-    // Vocal filter, measure loudness & sync tracks
+    
     if (ui.vocal_filter !== undefined)
         document.getElementById('vocal-filter-cb').checked = ui.vocal_filter;
     if (ui.measure_lufs !== undefined)
@@ -1569,30 +1309,28 @@ async function switchToSession(sid, sess) {
     if (ui.v2_sync_track !== undefined)
         document.getElementById('v2-sync-track').value = ui.v2_sync_track;
 
-    // Output path
+    
     const outPath = ui.out_path || _extractFromTasks(sess, 'out_path');
     if (outPath)
         document.getElementById('out-path-input').value = outPath;
 
-    // Segment overrides from ui_state
+    
     if (ui.segments && ui.segments.length > 1) {
         state.segments = ui.segments;
     }
 
-    /* --- Restore task results (display only) --- */
+    
 
     if (lastAlignResult) {
         showAlignResults(lastAlignResult);
-        // If ui_state has user-edited segments, override what showAlignResults set
+        
         if (ui.segments && ui.segments.length > 1) {
             state.segments = ui.segments;
             renderSegmentOverrides();
         }
-        const rsr = lastAlignResult.speed_ratio, roff = lastAlignResult.offset;
-        log(`[Align] Restored: atempo=${rsr != null ? rsr.toFixed(6) : '?'}, offset=${roff != null ? roff.toFixed(3) : '?'}s`);
     }
 
-    // Restore manual atempo/offset edits (overrides align result values)
+    
     if (ui.atempo_edited && ui.atempo !== undefined)
         document.getElementById('atempo-input').value = ui.atempo;
     if (ui.offset_edited && ui.offset !== undefined)
@@ -1601,11 +1339,10 @@ async function switchToSession(sid, sess) {
     state.offsetEdited = !!ui.offset_edited;
 
     if (lastMergeResult) {
-        setProgress('merge-progress', 100, 'Done');
-        log(`[Merge] Completed: ${lastMergeResult.elapsed} \u2192 ${lastMergeResult.output}`);
+        setProgress('task-progress', 100, 'Done');
     }
 
-    // Fetch fresh session data to check actual task status
+    
     try {
         const freshRes = await fetch(`/api/session/${sid}`);
         if (freshRes.ok) {
@@ -1621,7 +1358,7 @@ async function switchToSession(sid, sess) {
                     activeTask = tid;
                     activeTaskType = t.type;
                 }
-                // Show results for tasks that completed while we were away
+                
                 if (t.type === 'align' && t.status === 'done' && t.result && !lastAlignResult) {
                     lastAlignResult = t.result;
                     showAlignResults(lastAlignResult);
@@ -1636,35 +1373,27 @@ async function switchToSession(sid, sess) {
     if (_viewId !== myView) { _restoring = false; return; }
 
     if (activeTask && activeTaskType) {
-        lockButtons(activeTaskType);
-        const freshTasks = (_sessionCache[sid] && _sessionCache[sid].tasks) || sess.tasks || {};
-        const activeTaskData = freshTasks[activeTask] || {};
-        const currentProgress = activeTaskData.progress || '';
-
+        lockButtons();
         if (activeTaskType === 'align') {
-            setProgress('align-progress', 0, '0%');
+            setProgress('task-progress', 0, '0%');
             watchTask('align', activeTask,
                 (task) => {
                     if (_viewId !== myView) return;
                     if (typeof task.percent === 'number' && task.percent >= 0)
-                        setProgress('align-progress', task.percent);
+                        setProgress('task-progress', task.percent);
                 },
                 (task) => {
                     if (_viewId !== myView) return;
                     unlockButtons();
-                    setProgress('align-progress', task.status === 'done' ? 100 : 0, task.status === 'done' ? 'Done' : '');
+                    setProgress('task-progress', task.status === 'done' ? 100 : 0, task.status === 'done' ? 'Done' : '');
                     if (task.status === 'done') {
                         showAlignResults(task.result);
-                        const sr = task.result.speed_ratio, off = task.result.offset;
-                        log(`[Align] Done: ${task.result.inlier_count} inliers, atempo=${sr != null ? sr.toFixed(6) : '?'}, offset=${off != null ? off.toFixed(3) : '?'}s`);
-                    } else {
-                        log(`[Align] ${task.status}: ${task.error || ''}`);
                     }
                     refreshSessionList();
                 }
             );
         } else if (activeTaskType === 'merge' || activeTaskType === 'remux') {
-            startMergePoll(activeTaskType, activeTask, myView, currentProgress);
+            startMergePoll(activeTaskType, activeTask, myView);
         }
     }
     _restoring = false;
@@ -1718,36 +1447,16 @@ async function refreshSessionList() {
                 if (old.log_entries) sess.log_entries = old.log_entries;
                 if (old.log_cursor) sess.log_cursor = old.log_cursor;
             }
+            _sessionCache[sid] = sess;
         }
-        _sessionCache = sessions;
+        for (const sid of Object.keys(_sessionCache)) {
+            if (!(sid in sessions)) delete _sessionCache[sid];
+        }
         renderSessionList(_sessionCache);
     } catch (e) {}
 }
 
-async function pollActiveSession() {
-    if (!_sessionId) return;
-    try {
-        const res = await fetch(`/api/session/${_sessionId}/version`);
-        const { version } = await res.json();
-        const cached = _sessionCache[_sessionId];
-
-        if (!cached || cached.version !== version) {
-            const fullRes = await fetch(`/api/session/${_sessionId}`);
-            const sess = await fullRes.json();
-            if (cached) {
-                if (cached.log_entries) sess.log_entries = cached.log_entries;
-                if (cached.log_cursor) sess.log_cursor = cached.log_cursor;
-            }
-            _sessionCache[_sessionId] = sess;
-            renderSessionList(_sessionCache);
-        }
-        // Keep log cache warm
-        if (!_runningTaskId) await _fetchAndDisplayLogs();
-    } catch (e) {}
-}
-
 async function init() {
-    log('Ready.');
     _ensureLogStream();
     await refreshSessionList();
 
@@ -1760,6 +1469,5 @@ async function init() {
 }
 
 init();
-setInterval(pollActiveSession, 10000);
 document.getElementById('offset-input').addEventListener('input', () => { state.offsetEdited = true; });
 document.getElementById('atempo-input').addEventListener('input', () => { state.atempoEdited = true; });

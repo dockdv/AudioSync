@@ -419,3 +419,6 @@ FodyWeavers.xsd
 
 .easy-git/
 .local/
+# Linux core dumps
+core
+core.*

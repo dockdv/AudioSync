@@ -6,14 +6,14 @@ using AudioSync.Core.Tooling;
 
 namespace AudioSync.Core.Merging;
 
-/// <summary>
-/// Mirror of merger.py — three-pass ffmpeg merge with optional mkvmerge handoff.
-///
-/// Pass 1 (conditional): re-encode V2 audio with atempo/offset/segments/gain into tmp .mka.
-/// Pass 2 (always): mux V1 video + (tmp_audio | streamcopy V2 streams | V1 audio) + V1 subs.
-///                  When out_path is .mkv, calls MkvMerger.MuxToMkv instead.
-/// Pass 3 (subs, MP4 only): re-mux subtitles into the video.
-/// </summary>
+
+
+
+
+
+
+
+
 public sealed class FfmpegMerger : IMerger
 {
     private readonly IProcessRunner _runner;
@@ -84,7 +84,7 @@ public sealed class FfmpegMerger : IMerger
                     progressCallback?.Invoke("status", "Stream-copy mode: skipping audio re-encode");
                 }
 
-                // Announce phases now (after we know whether enc will run).
+                
                 EmitPhases(progressCallback, willEncode: !streamcopyV2,
                     willSub: !useMkvmerge && ctx.V1HasSubs);
 
@@ -121,10 +121,10 @@ public sealed class FfmpegMerger : IMerger
         }
 
         progressCallback?.Invoke("progress", "mux:100");
-        progressCallback?.Invoke("status", "Done!");
+        progressCallback?.Invoke("status", ctx.IsRemux ? "Remux completed." : "Merge completed.");
     }
 
-    // ===== prepare_merge =====
+    
 
     private async Task PrepareMergeAsync(SessionContext ctx, CancellationToken ct)
     {
@@ -155,7 +155,7 @@ public sealed class FfmpegMerger : IMerger
         if (!ctx.IsRemux) MergeHelpers.ClassifyV2Streams(ctx);
     }
 
-    /// <summary>Mirror of merger.set_v2_mode.</summary>
+    
     public static void SetV2Mode(SessionContext ctx, string? tmpAudioPath = null, bool streamcopy = false)
     {
         ctx.TmpAudioPath = tmpAudioPath;
@@ -172,7 +172,7 @@ public sealed class FfmpegMerger : IMerger
         return true;
     }
 
-    // ===== bitrate helpers =====
+    
 
     private async Task<Dictionary<int, long>> GetV2BitratesAsync(SessionContext ctx, CancellationToken ct)
     {
@@ -217,7 +217,7 @@ public sealed class FfmpegMerger : IMerger
         return $"{capped / 1000}k";
     }
 
-    // ===== piecewise filter (segments) =====
+    
 
     private static (string Filter, string OutputLabel, int InputsConsumed) BuildPiecewiseFilter(
         double atempo, IList<DetectedSegment> segments, int v1Sr, double v1Dur,
@@ -322,7 +322,7 @@ public sealed class FfmpegMerger : IMerger
         return (string.Join("; ", lines), outputLabel, nextInput - inputBase);
     }
 
-    // ===== pass 1: audio re-encode =====
+    
 
     private async Task MergePass1AudioAsync(
         SessionContext ctx, string tmpAudio, bool usePiecewise,
@@ -429,7 +429,7 @@ public sealed class FfmpegMerger : IMerger
         await RunFfmpegAsync(ctx, cmd, "enc", progressCallback, ct).ConfigureAwait(false);
     }
 
-    // ===== pass 2: mux =====
+    
 
     private async Task MuxPassAsync(SessionContext ctx, string outPath,
         Action<string, string>? progressCallback, CancellationToken ct)
@@ -488,7 +488,7 @@ public sealed class FfmpegMerger : IMerger
         if (ctx.AudioOrder is not null && ctx.AudioOrder.Count == audioMaps.Count
             && ctx.AudioOrder.All(i => i >= 0 && i < audioMaps.Count))
         {
-            // AudioOrder is a permutation of source indices (Python contract).
+            
             audioMaps = ctx.AudioOrder.Select(i => audioMaps[i]).ToList();
         }
         foreach (var m in audioMaps) { cmd.Add("-map"); cmd.Add(m); }
@@ -529,7 +529,7 @@ public sealed class FfmpegMerger : IMerger
         await RunFfmpegAsync(ctx, cmd, "mux", progressCallback, ct).ConfigureAwait(false);
     }
 
-    // ===== pass 3: subtitles =====
+    
 
     private async Task MergePass3SubsAsync(SessionContext ctx, string nosubsPath, string outPath,
         Action<string, string>? progressCallback, CancellationToken ct)
@@ -573,7 +573,7 @@ public sealed class FfmpegMerger : IMerger
         await RunFfmpegAsync(ctx, cmd, "sub", progressCallback, ct).ConfigureAwait(false);
     }
 
-    // ===== runner =====
+    
 
     private async Task RunFfmpegAsync(SessionContext ctx, List<string> args, string progressPrefix,
         Action<string, string>? progressCallback, CancellationToken ct)
