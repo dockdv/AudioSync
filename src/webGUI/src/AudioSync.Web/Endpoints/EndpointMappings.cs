@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json;
 using AudioSync.Core.Merging;
 using AudioSync.Core.Probing;
@@ -357,15 +358,34 @@ public static class EndpointMappings
             });
     }
 
+    private static readonly string AppVersion = ResolveAppVersion();
+
+    private static string ResolveAppVersion()
+    {
+        var info = typeof(EndpointMappings).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (!string.IsNullOrEmpty(info))
+        {
+            var plus = info.IndexOf('+');
+            if (plus >= 0) info = info[..plus];
+        }
+        // SDK default (1.0.0) means no <Version> was set — treat as dev build.
+        return (string.IsNullOrEmpty(info) || info == "1.0.0") ? "" : info;
+    }
+
     // ===== / + /api/info + /api/languages =====
     private static void MapInfo(WebApplication app)
     {
         app.MapGet("/api/info", (IToolLocator locator) =>
         {
             var versions = locator.VersionInfo();
+            var title = string.IsNullOrEmpty(AppVersion)
+                ? "Audio Sync & Merge"
+                : $"Audio Sync & Merge v{AppVersion}";
             return Results.Json(new
             {
-                app_title = "Audio Sync & Merge",
+                app_title = title,
+                app_version = AppVersion,
                 ffmpeg_path = locator.Ffmpeg ?? "",
                 ffprobe_path = locator.Ffprobe ?? "",
                 mkvmerge_path = locator.Mkvmerge ?? "",
