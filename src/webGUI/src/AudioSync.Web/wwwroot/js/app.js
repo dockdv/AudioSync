@@ -539,7 +539,6 @@ async function ensureSession() {
     _sessionId = res.session_id;
     sessionStorage.setItem('audiosync_session', _sessionId);
     _sessionCache[_sessionId] = { label: 'New session', tasks: {}, active_task: null, ui_state: {}, version: 0, created_at: 0, log_entries: [], log_cursor: 0 };
-    _logCursor = 0;
     await refreshSessionList();
     return _sessionId;
 }
@@ -1199,7 +1198,6 @@ async function switchToSession(sid, sess) {
     
     
     const cached = _sessionCache[sid];
-    _logCursor = (cached && cached.log_cursor) || 0;
     if (cached && cached.log_entries && cached.log_entries.length) {
         const box = document.getElementById('log-box');
         box.value = cached.log_entries.join('\n') + '\n';

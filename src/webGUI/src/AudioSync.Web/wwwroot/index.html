@@ -118,9 +118,6 @@
                     <input type="text" id="offset-input" value="0.000" style="width:130px">
                 </div>
                 <div id="segment-overrides"></div>
-                <div class="row mt-4">
-                    <button class="btn-blue merge-h28" onclick="openDefaultAudioEditor()" style="flex:1">Default Audio Track...</button>
-                </div>
             </div>
         </div>
 
@@ -153,6 +150,9 @@
                     <label id="gain-match-label" style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer;opacity:0.5" title="Loudness must be measured first!">
                         <input type="checkbox" id="gain-match-cb" disabled onchange="saveUIState()"> Match V2 loudness to V1
                     </label>
+                </div>
+                <div class="row">
+                    <button class="btn-blue merge-h28" onclick="openDefaultAudioEditor()" style="flex:1">Default Audio Track...</button>
                 </div>
                 <div class="row">
                     <button class="btn-blue merge-h28" id="samples-btn" onclick="runCreateSample()" style="flex:1">Create Sample</button>
