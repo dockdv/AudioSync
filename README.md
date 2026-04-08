@@ -55,6 +55,10 @@ FFmpeg complex filtergraph applies:
 
 For MKV output, **mkvmerge** handles final muxing with track inclusion, reordering, default track flag, per-track language/title metadata, and stream-copy when no re-encoding is needed.
 
+## Screenshots
+
+![AudioSync GUI](https://raw.githubusercontent.com/dockdv/AudioSync/main/screenshots/gui.png)
+
 ## Requirements
 
 - **.NET 10 SDK** (build) or .NET 10 runtime (run framework-dependent build)
@@ -83,7 +87,7 @@ Pre-built Linux image: [`dockdv/audiosync` on Docker Hub](https://hub.docker.com
 ```yaml
 services:
   audiosync:
-    image: dockdv/audiosync:latest
+    image: ghcr.io/dockdv/audiosync:latest
     ports:
       - 5000:5000
     volumes:
