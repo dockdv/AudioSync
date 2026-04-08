@@ -131,7 +131,7 @@ jobs:
           </dict>
           </plist>
           PLIST
-            hdiutil create -volname AudioSync -srcfolder "$APP" -ov -format UDZO "release/${{ matrix.asset }}"
+            hdiutil create -volname AudioSync -srcfolder "$APP" -size 500m -fs HFS+ -ov -format UDZO "release/${{ matrix.asset }}"
           else
             cp "dist/${{ matrix.bin }}" "release/${{ matrix.asset }}"
           fi
