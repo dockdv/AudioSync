@@ -106,14 +106,33 @@ services:
 
 Then open http://localhost:5000.
 
-## Publish (single-file Windows executable)
+## Publish (single-file native executable)
+
+From `src/webGUI`, pick the runtime identifier for your target:
 
 ```bash
-cd src/webGUI
-dotnet publish src/AudioSync.Web -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
+# Windows x64
+dotnet publish src/AudioSync.Web -c Release -r win-x64   --self-contained -p:PublishSingleFile=true
+
+# Linux x64
+dotnet publish src/AudioSync.Web -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true
+
+# macOS Apple Silicon
+dotnet publish src/AudioSync.Web -c Release -r osx-arm64 --self-contained -p:PublishSingleFile=true
+
+# macOS Intel
+dotnet publish src/AudioSync.Web -c Release -r osx-x64   --self-contained -p:PublishSingleFile=true
 ```
 
-Drop `ffmpeg.exe`, `ffprobe.exe`, `mkvmerge.exe` next to the produced `AudioSync.Web.exe`.
+Drop `ffmpeg`, `ffprobe`, and `mkvmerge` (or their `.exe` counterparts on Windows) next to the produced executable, or make sure they're on `PATH`.
+
+On macOS, the binary is unsigned — if Gatekeeper blocks it on first launch, clear the quarantine flag:
+
+```bash
+xattr -dr com.apple.quarantine ./AudioSync.Web
+```
+
+On Linux/macOS, install the required tools via your package manager — e.g. `brew install ffmpeg mkvtoolnix` or `apt install ffmpeg mkvtoolnix`.
 
 ## Note
 
