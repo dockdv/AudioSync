@@ -80,6 +80,10 @@ dotnet run --project src/AudioSync.Web
 
 Then open http://localhost:5000.
 
+## Windows
+
+Pre-built single-file Windows executable is published on the [GitHub Releases](https://github.com/dockdv/AudioSync/releases) page. Download `AudioSync.exe`, drop `ffmpeg.exe`, `ffprobe.exe`, and `mkvmerge.exe` next to it, and run.
+
 ## Docker
 
 Pre-built Linux image: [`dockdv/audiosync` on Docker Hub](https://hub.docker.com/r/dockdv/audiosync).
