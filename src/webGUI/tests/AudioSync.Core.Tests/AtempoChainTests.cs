@@ -8,7 +8,8 @@ public class AtempoChainTests
     public void NoOp_When_Atempo_One()
     {
         Assert.Empty(MergeHelpers.AtempoChain(1.0));
-        Assert.Empty(MergeHelpers.AtempoChain(1.00001));
+        Assert.Empty(MergeHelpers.AtempoChain(1.000005));
+        Assert.NotEmpty(MergeHelpers.AtempoChain(1.0001));
     }
 
     [Fact]

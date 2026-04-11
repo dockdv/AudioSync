@@ -11,6 +11,10 @@ namespace AudioSync.Core.Merging;
 
 public static class MergeHelpers
 {
+    public const double AtempoUnityEpsilon = 1e-5;
+
+    public static bool IsAtempoUnity(double atempo) => Math.Abs(atempo - 1.0) <= AtempoUnityEpsilon;
+
     private static readonly Dictionary<string, string> MkvTypeMap = new()
     {
         ["video"] = "video", ["audio"] = "audio",
@@ -181,7 +185,7 @@ public static class MergeHelpers
     
     public static List<string> AtempoChain(double atempo)
     {
-        if (Math.Abs(atempo - 1.0) <= 0.0001) return new();
+        if (IsAtempoUnity(atempo)) return new();
         if (atempo <= 0.01 || atempo > 200)
             throw new ArgumentOutOfRangeException(nameof(atempo), $"atempo out of range (0.01–200), got {atempo}");
         var parts = new List<string>();

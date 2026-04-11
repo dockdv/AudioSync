@@ -166,7 +166,7 @@ public sealed class FfmpegMerger : IMerger
 
     private static bool CanStreamcopyV2(double atempo, bool usePiecewise, Dictionary<int, double>? v2Gains)
     {
-        if (Math.Abs(atempo - 1.0) > 0.0001) return false;
+        if (!MergeHelpers.IsAtempoUnity(atempo)) return false;
         if (usePiecewise) return false;
         if (v2Gains is { Count: > 0 }) return false;
         return true;
@@ -400,7 +400,7 @@ public sealed class FfmpegMerger : IMerger
                 if (trackDelay < -0.001)
                 {
                     double trim = Math.Abs(trackDelay);
-                    if (Math.Abs(ctx.Atempo - 1.0) > 0.0001) trim = Math.Abs(trackDelay) * ctx.Atempo;
+                    if (!MergeHelpers.IsAtempoUnity(ctx.Atempo)) trim = Math.Abs(trackDelay) * ctx.Atempo;
                     filters.Add($"atrim=start={MergeHelpers.F6(trim)}");
                     filters.Add("asetpts=PTS-STARTPTS");
                 }
