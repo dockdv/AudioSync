@@ -197,7 +197,7 @@ public sealed class FfLib
         long expectedBytes = (long)(duration * targetSr * 4);
         long totalRead = 0;
         int lastPct = -1;
-        var ms = new MemoryStream();
+        using var ms = new MemoryStream();
 
         var streamRes = await _runner.RunStreamingAsync(new ProcessRunOptions
         {
@@ -264,49 +264,7 @@ public sealed class FfLib
         return res.Stdout;
     }
 
-    
-    public async Task<List<double>> GetKeyframeTimestampsAsync(
-        string handle, double start = 0.0, double? end = null,
-        CancellationToken ct = default)
-    {
-        var args = new List<string>
-        {
-            "-v", "quiet",
-            "-select_streams", "v:0",
-            "-show_entries", "packet=pts_time,flags",
-            "-of", "csv=p=0",
-        };
-        if (start > 0 || end.HasValue)
-        {
-            string endStr = end.HasValue ? $"%{end.Value.ToString("F3", CultureInfo.InvariantCulture)}" : "";
-            args.Add("-read_intervals");
-            args.Add($"{start.ToString("F3", CultureInfo.InvariantCulture)}{endStr}");
-        }
-        args.Add(handle);
 
-        var res = await _runner.RunAsync(new ProcessRunOptions
-        {
-            FileName = Ffprobe,
-            Arguments = args,
-            Timeout = TimeSpan.FromSeconds(600),
-        }, ct).ConfigureAwait(false);
-
-        var timestamps = new List<double>();
-        foreach (var raw in System.Text.Encoding.UTF8.GetString(res.Stdout).Split('\n'))
-        {
-            var line = raw.Trim();
-            if (line.Length == 0) continue;
-            var parts = line.Split(',');
-            if (parts.Length < 2) continue;
-            if (!parts[1].Contains('K')) continue;
-            if (double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var pts))
-                timestamps.Add(pts);
-        }
-        timestamps.Sort();
-        return timestamps;
-    }
-
-    
     public async Task<double> GetVideoFrameRateAsync(string handle, CancellationToken ct = default)
     {
         var res = await _runner.RunAsync(new ProcessRunOptions

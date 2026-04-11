@@ -41,7 +41,6 @@ builder.Services.AddHostedService<SessionPurgeService>();
 
 
 builder.Services.AddSingleton<AudioLoader>();
-builder.Services.AddSingleton<CutDetector>();
 builder.Services.AddSingleton<IVisualMatcher, VisualMatcher>();
 builder.Services.AddSingleton<ISyncEngine, SyncEngine>();
 builder.Services.AddSingleton<MkvMerger>();

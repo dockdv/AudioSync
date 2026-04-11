@@ -9,14 +9,14 @@ namespace AudioSync.Core.Visual;
 
 public sealed class VisualMatcher : IVisualMatcher
 {
-    private const double FrameTol = 0.083; 
+    private const double FrameTol = 0.083;
     private const double SimAcceptHigh = 0.8;
     private const double SimAcceptLow = 0.5;
+    private const double DarkThreshold = 12.0;
 
     private readonly FfLib _ff;
-    private readonly CutDetector _cuts;
 
-    public VisualMatcher(FfLib ff, CutDetector cuts) { _ff = ff; _cuts = cuts; }
+    public VisualMatcher(FfLib ff) { _ff = ff; }
 
     
 
@@ -29,7 +29,9 @@ public sealed class VisualMatcher : IVisualMatcher
             if (bytes is null) return (null, 0, 0);
             return (CutDetector.ToFrame(bytes), FfLib.FrameH, FfLib.FrameW);
         }
-        catch { return (null, 0, 0); }
+        catch (OperationCanceledException) { throw; }
+        catch (IOException) { return (null, 0, 0); }
+        catch (InvalidOperationException) { return (null, 0, 0); }
     }
 
     private async Task<double> CompareAtAsync(
@@ -144,6 +146,7 @@ public sealed class VisualMatcher : IVisualMatcher
         Action<string, string>? progressCallback = null,
         CancellationToken ct = default)
     {
+        if (speed <= 0) return null;
         double margin = Math.Max(60.0, dur1 * 0.05);
         double usable = dur1 - 2 * margin;
         if (usable < 30) return null;
@@ -161,6 +164,9 @@ public sealed class VisualMatcher : IVisualMatcher
         var (v2W, v2H) = await _ff.GetVideoResolutionAsync(v2Path, ct).ConfigureAwait(false);
         if (!v2W.HasValue || !v2H.HasValue || v2W <= 0 || v2H <= 0) return null;
 
+        double v1Fps = await _ff.GetVideoFrameRateAsync(v1Path, ct).ConfigureAwait(false);
+        if (v1Fps <= 0) v1Fps = 24.0;
+
         double v2Fps = await _ff.GetVideoFrameRateAsync(v2Path, ct).ConfigureAwait(false);
         if (v2Fps <= 0) v2Fps = 24.0;
 
@@ -173,22 +179,33 @@ public sealed class VisualMatcher : IVisualMatcher
 
         async Task<(double?, double[]?, double[]?)> FindV1Cut(double loc)
         {
-            var keyframes = await _ff.GetKeyframeTimestampsAsync(v1Path, loc, loc + searchLen, ct).ConfigureAwait(false);
-            if (keyframes.Count == 0) return (null, null, null);
-            double frameInterval = 1.0 / 24.0;
-            if (keyframes.Count >= 2)
+            var frames = await _ff.ExtractFrameSequenceAsync(
+                v1Path, loc, searchLen, FfLib.FrameW, FfLib.FrameH, v1Fps, ct).ConfigureAwait(false);
+            if (frames.Count < 2) return (null, null, null);
+            int frameSize = FfLib.FrameW * FfLib.FrameH;
+            for (int i = 1; i < frames.Count; i++)
             {
-                int gn = Math.Min(20, keyframes.Count - 1);
-                double minGap = double.MaxValue;
-                bool any = false;
-                for (int i = 0; i < gn; i++)
+                if ((i & 0x1F) == 0) ct.ThrowIfCancellationRequested();
+                var (curT, curBytes) = frames[i];
+                var (_, prevBytes) = frames[i - 1];
+
+                double sum = 0;
+                for (int k = 0; k < frameSize; k++)
                 {
-                    double g = keyframes[i + 1] - keyframes[i];
-                    if (g > 0 && g < minGap) { minGap = g; any = true; }
+                    double d = (double)curBytes[k] - prevBytes[k];
+                    sum += d * d;
                 }
-                if (any) frameInterval = Math.Min(frameInterval, minGap);
+                double mse = sum / frameSize;
+                if (mse <= CutDetector.MseThreshold) continue;
+
+                double mean = 0;
+                for (int k = 0; k < frameSize; k++) mean += curBytes[k];
+                mean /= frameSize;
+                if (mean < DarkThreshold) continue;
+
+                return (curT, CutDetector.ToFrame(curBytes), CutDetector.ToFrame(prevBytes));
             }
-            return await _cuts.FindHardCutFromAsync(keyframes, 0, v1Path, v1W.Value, v1H.Value, frameInterval, ct).ConfigureAwait(false);
+            return (null, null, null);
         }
 
         async Task<double?> MatchInV2(double v1Time, double[] v1Frame, double[] v1PrevFrame)
@@ -209,8 +226,8 @@ public sealed class VisualMatcher : IVisualMatcher
             }
 
             
-            var (v1CutCrop, v1CutH, v1CutW) = CutDetector.CropLetterbox(v1Frame, v1H.Value, v1W.Value, v1Ar, widerAr);
-            var (v1PrevCrop, v1PrevH, v1PrevW) = CutDetector.CropLetterbox(v1PrevFrame, v1H.Value, v1W.Value, v1Ar, widerAr);
+            var (v1CutCrop, v1CutH, v1CutW) = CutDetector.CropLetterbox(v1Frame, FfLib.FrameH, FfLib.FrameW, v1Ar, widerAr);
+            var (v1PrevCrop, v1PrevH, v1PrevW) = CutDetector.CropLetterbox(v1PrevFrame, FfLib.FrameH, FfLib.FrameW, v1Ar, widerAr);
 
             double bestSim = -1.0;
             double? bestTime = null;
@@ -238,7 +255,7 @@ public sealed class VisualMatcher : IVisualMatcher
                 double mean = 0;
                 for (int k = 0; k < frameSize; k++) mean += curBytes[k];
                 mean /= frameSize;
-                if (mean < 20) continue;
+                if (mean < DarkThreshold) continue;
 
                 nCuts++;
                 var curFrame = CutDetector.ToFrame(curBytes);
@@ -272,11 +289,20 @@ public sealed class VisualMatcher : IVisualMatcher
             return v1Time - bestTime.Value;
         }
 
+        int locIdx = 0;
         foreach (var loc in locations)
         {
             ct.ThrowIfCancellationRequested();
+            locIdx++;
+            progressCallback?.Invoke("status",
+                $"Visual fine-tune: location {locIdx}/{locations.Count} ({SyncEngine.FormatTimestamp(loc)}) — searching V1 hard cut...");
             var (v1Time, v1Frame, v1PrevFrame) = await FindV1Cut(loc).ConfigureAwait(false);
-            if (!v1Time.HasValue || v1Frame is null || v1PrevFrame is null) continue;
+            if (!v1Time.HasValue || v1Frame is null || v1PrevFrame is null)
+            {
+                progressCallback?.Invoke("status",
+                    $"Visual fine-tune: location {locIdx}/{locations.Count} — no V1 hard cut found ✗");
+                continue;
+            }
             progressCallback?.Invoke("status", $"Visual fine-tune: matching V1 cut at {SyncEngine.FormatTimestamp(v1Time)} in V2...");
             var matched = await MatchInV2(v1Time.Value, v1Frame, v1PrevFrame).ConfigureAwait(false);
             if (!matched.HasValue) continue;
