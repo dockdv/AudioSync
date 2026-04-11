@@ -56,12 +56,12 @@ function _buildUIState() {
 }
 
 function _persistUIState(uiState) {
-    if (!_sessionId) return;
+    if (!_sessionId) return Promise.resolve();
     const sid = _sessionId;
     if (_sessionCache[sid]) {
         _sessionCache[sid].ui_state = { ...uiState };
     }
-    fetch(`/api/session/${sid}/state`, {
+    return fetch(`/api/session/${sid}/state`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(uiState),
@@ -86,8 +86,8 @@ function saveUIState() {
 
 function flushUIState() {
     clearTimeout(_saveTimer);
-    if (_restoring || !_sessionId || !_sessionCache[_sessionId]) return;
-    _persistUIState(_buildUIState());
+    if (_restoring || !_sessionId || !_sessionCache[_sessionId]) return Promise.resolve();
+    return _persistUIState(_buildUIState());
 }
 
 function formatTimestamp(sec) {
@@ -327,6 +327,12 @@ async function loadVideo(n) {
     const pathInput = document.getElementById(`v${n}-path-input`);
     const filepath = pathInput.value.trim();
     if (!filepath) return;
+
+    resetVideoSlot(n);
+    pathInput.value = filepath;
+    resetAlignParams();
+    resetResultsPanel();
+    resetSegmentsUI();
 
     const fileInfo = document.getElementById(`v${n}-file-info`);
     fileInfo.textContent = 'Probing...';
@@ -747,7 +753,7 @@ async function runMerge(durationLimit) {
     }
 
     await ensureSession();
-    flushUIState();
+    await flushUIState();
     const myView = ++_viewId;
 
     lockButtons();
@@ -1467,5 +1473,5 @@ async function init() {
 }
 
 init();
-document.getElementById('offset-input').addEventListener('input', () => { state.offsetEdited = true; });
-document.getElementById('atempo-input').addEventListener('input', () => { state.atempoEdited = true; });
+document.getElementById('offset-input').addEventListener('input', () => { state.offsetEdited = true; saveUIState(); });
+document.getElementById('atempo-input').addEventListener('input', () => { state.atempoEdited = true; saveUIState(); });
