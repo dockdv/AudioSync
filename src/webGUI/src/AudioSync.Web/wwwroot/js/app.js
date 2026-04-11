@@ -42,6 +42,7 @@ function _buildUIState() {
         offset_edited: state.offsetEdited,
         vocal_filter: document.getElementById('vocal-filter-cb').checked,
         measure_lufs: document.getElementById('measure-lufs-cb').checked,
+        visual_refine: document.getElementById('visual-refine-cb').checked,
         v1_sync_track: document.getElementById('v1-sync-track').value,
         v2_sync_track: document.getElementById('v2-sync-track').value,
         segments: state.segments,
@@ -564,12 +565,15 @@ async function runAlign() {
 
     const vocalFilter = document.getElementById('vocal-filter-cb').checked;
     const measureLufs = document.getElementById('measure-lufs-cb').checked;
+    const visualRefineCb = document.getElementById('visual-refine-cb');
+    const visualRefine = visualRefineCb.checked && !visualRefineCb.disabled;
 
     const result = await apiPost(`/api/session/${_sessionId}/align`, {
         v1_path: state.v1.path, v2_path: state.v2.path,
         v1_track: t1, v2_track: t2,
         vocal_filter: vocalFilter,
         measure_lufs: measureLufs,
+        visual_refine: visualRefine,
         v1_streams: state.v1.streams,
         v2_streams: state.v2.streams,
         v1_tracks: state.v1.tracks,
@@ -971,6 +975,14 @@ function updateSyncPanels() {
     for (const id of ['panel-align', 'panel-override', 'panel-results']) {
         document.getElementById(id).classList.toggle('panel-disabled', !bothLoaded);
     }
+    const v2HasVideo = (state.v2.streams || []).some(s => s.codec_type === 'video');
+    const vrCb = document.getElementById('visual-refine-cb');
+    const vrLbl = document.getElementById('visual-refine-label');
+    if (vrCb && vrLbl) {
+        vrCb.disabled = !v2HasVideo;
+        vrLbl.title = v2HasVideo ? '' : 'V2 has no video stream';
+        vrLbl.style.opacity = v2HasVideo ? '' : '0.5';
+    }
 }
 
 function updateMergeButton() {
@@ -1297,6 +1309,8 @@ async function switchToSession(sid, sess) {
         document.getElementById('vocal-filter-cb').checked = ui.vocal_filter;
     if (ui.measure_lufs !== undefined)
         document.getElementById('measure-lufs-cb').checked = ui.measure_lufs;
+    if (ui.visual_refine !== undefined)
+        document.getElementById('visual-refine-cb').checked = ui.visual_refine;
     if (ui.v1_lufs != null && ui.v2_lufs != null) {
         document.getElementById('gain-match-cb').disabled = false;
         document.getElementById('gain-match-label').title = '';

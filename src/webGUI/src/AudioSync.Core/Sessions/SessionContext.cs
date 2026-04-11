@@ -25,6 +25,7 @@ public sealed class SessionContext
     public int AlignTrack2 { get; set; }
     public bool VocalFilter { get; set; }
     public bool MeasureLufs { get; set; }
+    public bool VisualRefine { get; set; } = true;
 
     
     public double AlignDur1 { get; set; }

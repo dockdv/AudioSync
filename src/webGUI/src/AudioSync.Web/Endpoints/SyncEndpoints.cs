@@ -139,6 +139,7 @@ public static class SyncEndpoints
                         ctx.AlignTrack2 = req.V2Track;
                         ctx.VocalFilter = req.VocalFilter;
                         ctx.MeasureLufs = req.MeasureLufs;
+                        ctx.VisualRefine = req.VisualRefine;
                         ctx.V1Info = new ProbeResult
                         {
                             Streams = req.V1Streams ?? new(),

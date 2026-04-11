@@ -55,7 +55,7 @@ public sealed class SyncEngine : ISyncEngine
         ctx.RansacOffset = ctx.AlignB;
 
         
-        if (_visual != null && ctx.V1HasVideo && ctx.V2HasVideo &&
+        if (_visual != null && ctx.VisualRefine && ctx.V1HasVideo && ctx.V2HasVideo &&
             (detected == null || detected.Count <= 1))
         {
             var refined = await _visual.RefineOffsetVisualAsync(

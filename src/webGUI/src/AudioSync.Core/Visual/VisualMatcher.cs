@@ -10,8 +10,9 @@ namespace AudioSync.Core.Visual;
 public sealed class VisualMatcher : IVisualMatcher
 {
     private const double FrameTol = 0.083;
-    private const double SimAcceptHigh = 0.8;
     private const double SimAcceptLow = 0.5;
+    private const double ClusterAvgSim = 0.55;
+    private const int ClusterMinCount = 3;
     private const double DarkThreshold = 12.0;
 
     private readonly FfLib _ff;
@@ -174,8 +175,8 @@ public sealed class VisualMatcher : IVisualMatcher
         double v2Ar = (double)v2W.Value / v2H.Value;
         double widerAr = Math.Max(v1Ar, v2Ar);
 
-        var allOffsets = new List<double>();
-        List<double>? agreeing = null;
+        var candidates = new List<(double Offset, double CutSim, double PrevSim)>();
+        List<(double Offset, double CutSim, double PrevSim)>? acceptedCluster = null;
 
         async Task<(double?, double[]?, double[]?)> FindV1Cut(double loc)
         {
@@ -208,7 +209,7 @@ public sealed class VisualMatcher : IVisualMatcher
             return (null, null, null);
         }
 
-        async Task<double?> MatchInV2(double v1Time, double[] v1Frame, double[] v1PrevFrame)
+        async Task<(double Offset, double CutSim, double PrevSim)?> MatchInV2(double v1Time, double[] v1Frame, double[] v1PrevFrame)
         {
             double expectedV2 = (v1Time - offset) / speed;
             double t2Start = Math.Max(0.0, expectedV2 - 10.0);
@@ -273,20 +274,16 @@ public sealed class VisualMatcher : IVisualMatcher
                 bestPrevSim = prevSim;
             }
 
-            if (!bestTime.HasValue || bestSim < SimAcceptHigh || bestPrevSim < SimAcceptHigh)
+            if (!bestTime.HasValue)
             {
-                if (nCuts == 0)
-                    progressCallback?.Invoke("status",
-                        $"Visual fine-tune: V1 {SyncEngine.FormatTimestamp(v1Time)} \u2194 V2 no cuts in {frames.Count} frames \u2717");
-                else
-                    progressCallback?.Invoke("status",
-                        $"Visual fine-tune: V1 {SyncEngine.FormatTimestamp(v1Time)} \u2194 V2 best={SyncEngine.FormatTimestamp(bestTime)} cut={bestSim:F3} prev={bestPrevSim:F3} \u2717");
+                progressCallback?.Invoke("status",
+                    $"Visual fine-tune: V1 {SyncEngine.FormatTimestamp(v1Time)} \u2194 V2 no cuts in {frames.Count} frames");
                 return null;
             }
 
             progressCallback?.Invoke("status",
-                $"Visual fine-tune: V1 {SyncEngine.FormatTimestamp(v1Time)} \u2194 V2 {SyncEngine.FormatTimestamp(bestTime)} cut={bestSim:F3} prev={bestPrevSim:F3} \u2713");
-            return v1Time - bestTime.Value;
+                $"Visual fine-tune: V1 {SyncEngine.FormatTimestamp(v1Time)} \u2194 V2 {SyncEngine.FormatTimestamp(bestTime)} cut={bestSim:F3} prev={bestPrevSim:F3}");
+            return (v1Time - bestTime.Value, bestSim, bestPrevSim);
         }
 
         int locIdx = 0;
@@ -306,22 +303,34 @@ public sealed class VisualMatcher : IVisualMatcher
             progressCallback?.Invoke("status", $"Visual fine-tune: matching V1 cut at {SyncEngine.FormatTimestamp(v1Time)} in V2...");
             var matched = await MatchInV2(v1Time.Value, v1Frame, v1PrevFrame).ConfigureAwait(false);
             if (!matched.HasValue) continue;
-            allOffsets.Add(matched.Value);
-            var group = allOffsets.Where(o => Math.Abs(o - matched.Value) <= FrameTol).ToList();
-            if (group.Count >= 3) { agreeing = group; break; }
+            candidates.Add(matched.Value);
+
+            var cluster = candidates.Where(c => Math.Abs(c.Offset - matched.Value.Offset) <= FrameTol).ToList();
+            if (cluster.Count >= ClusterMinCount)
+            {
+                double avgCut = cluster.Average(c => c.CutSim);
+                double avgPrev = cluster.Average(c => c.PrevSim);
+                if (avgCut >= ClusterAvgSim && avgPrev >= ClusterAvgSim)
+                {
+                    progressCallback?.Invoke("status",
+                        $"Visual fine-tune: cluster of {cluster.Count} at {matched.Value.Offset:F3}s (avg cut={avgCut:F3}, prev={avgPrev:F3}) \u2713");
+                    acceptedCluster = cluster;
+                    break;
+                }
+            }
         }
 
-        if (agreeing is null)
+        if (acceptedCluster is null)
         {
             progressCallback?.Invoke("status",
-                $"Visual fine-tune: only {allOffsets.Count} cuts matched, no 3 agree, keeping coarse offset");
+                $"Visual fine-tune: {candidates.Count} candidates, no cluster passed gate, keeping coarse offset");
             return null;
         }
 
-        agreeing.Sort();
-        double refined = agreeing.Count % 2 == 1
-            ? agreeing[agreeing.Count / 2]
-            : (agreeing[agreeing.Count / 2 - 1] + agreeing[agreeing.Count / 2]) / 2;
+        var offsets = acceptedCluster.Select(c => c.Offset).OrderBy(x => x).ToList();
+        double refined = offsets.Count % 2 == 1
+            ? offsets[offsets.Count / 2]
+            : (offsets[offsets.Count / 2 - 1] + offsets[offsets.Count / 2]) / 2;
 
         if (Math.Abs(refined) > 5.0)
         {
@@ -329,7 +338,7 @@ public sealed class VisualMatcher : IVisualMatcher
             return null;
         }
         progressCallback?.Invoke("status",
-            $"Visual fine-tune: {agreeing.Count} cuts matched, offset {offset:F3}s -> {refined:F3}s");
+            $"Visual fine-tune: {acceptedCluster.Count} cuts matched, offset {offset:F3}s -> {refined:F3}s");
         return refined;
     }
 }

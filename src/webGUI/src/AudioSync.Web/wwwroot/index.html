@@ -99,6 +99,9 @@
                     <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
                         <input type="checkbox" id="measure-lufs-cb" onchange="saveUIState()"> Measure loudness
                     </label>
+                    <label id="visual-refine-label" style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer">
+                        <input type="checkbox" id="visual-refine-cb" checked onchange="saveUIState()"> Use visual refine
+                    </label>
                 </div>
                 <div class="row mt-4">
                     <button class="btn-green merge-h28" id="align-btn" onclick="runAlign()" style="flex:1">Auto-Align</button>
