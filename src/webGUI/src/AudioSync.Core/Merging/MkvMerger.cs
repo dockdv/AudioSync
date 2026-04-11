@@ -147,11 +147,16 @@ public sealed class MkvMerger
             }
             else v2Cmd.Add("--no-subtitles");
 
-            if (Math.Abs(ctx.Offset) > 0.001)
+            var v2Tracks = ctx.V2Info?.Audio ?? new();
+            foreach (var tid in ctx.V2AudTids)
             {
-                int delayMs = (int)Math.Round(ctx.Offset * 1000);
-                foreach (var tid in ctx.V2AudTids)
+                double trackSt = 0.0;
+                foreach (var t in v2Tracks)
+                    if (t.StreamIndex == tid) { trackSt = t.StartTime; break; }
+                double delay = ctx.Offset - trackSt;
+                if (Math.Abs(delay) > 0.001)
                 {
+                    int delayMs = (int)Math.Round(delay * 1000);
                     v2Cmd.Add("--sync"); v2Cmd.Add($"{tid}:{delayMs}");
                 }
             }

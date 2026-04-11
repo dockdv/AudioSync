@@ -66,38 +66,19 @@ public sealed class SyncEngine : ISyncEngine
             if (refined.HasValue)
             {
                 ctx.VisualRefinedOffset = refined.Value;
-                ctx.AlignB = refined.Value;
+                double v2AudioSt = 0.0;
+                foreach (var t in ctx.V2Info?.Audio ?? new())
+                    if (t.Index == ctx.AlignTrack2) { v2AudioSt = t.StartTime; break; }
+                double bAudio = ctx.AlignA * v2AudioSt + refined.Value;
+                double delta = bAudio - ctx.AlignB;
+                ctx.AlignB = bAudio;
                 if (detected != null && detected.Count > 0)
-                {
-                    double delta = refined.Value - detected[0].Offset;
                     foreach (var s in detected) s.Offset += delta;
-                }
                 var (rmean, rmax, rend) = Ransac.ResidualStats(ctx.AlignPairs, ctx.AlignA, ctx.AlignB);
                 ctx.AlignRmean = rmean;
                 ctx.AlignRmax = rmax;
                 ctx.AlignRend = rend;
             }
-        }
-
-        
-        double v2St = 0.0;
-        if (ctx.V2Info != null)
-        {
-            foreach (var t in ctx.V2Info.Audio)
-            {
-                if (t.Index == ctx.AlignTrack2) { v2St = t.StartTime; break; }
-            }
-        }
-        if (v2St > 0.01)
-        {
-            ctx.AlignB -= v2St;
-            ctx.CoarseOffset -= v2St;
-            ctx.AudioOffset -= v2St;
-            if (ctx.RansacOffset.HasValue) ctx.RansacOffset = ctx.RansacOffset.Value - v2St;
-            for (int i = 0; i < ctx.AltOffsets.Count; i++)
-                ctx.AltOffsets[i] = ctx.AltOffsets[i] - v2St;
-            if (detected != null)
-                foreach (var s in detected) s.Offset -= v2St;
         }
 
         ctx.Atempo = SpeedToAtempo(ctx.AlignA);
@@ -464,7 +445,13 @@ public sealed class SyncEngine : ISyncEngine
                 {
                     var pairs = ctx.AlignPairs ?? new();
                     double newB;
-                    if (ctx.VisualRefinedOffset.HasValue) newB = ctx.AlignB;
+                    if (ctx.VisualRefinedOffset.HasValue)
+                    {
+                        double v2AudioSt = 0.0;
+                        foreach (var t in ctx.V2Info?.Audio ?? new())
+                            if (t.Index == ctx.AlignTrack2) { v2AudioSt = t.StartTime; break; }
+                        newB = newA * v2AudioSt + ctx.VisualRefinedOffset.Value;
+                    }
                     else if (pairs.Count >= 2)
                     {
                         double sum = 0;

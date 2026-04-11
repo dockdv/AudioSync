@@ -331,7 +331,6 @@ public sealed class FfmpegMerger : IMerger
     {
         progressCallback?.Invoke("status", "Pass 1: encoding audio...");
         var v2Bitrates = await GetV2BitratesAsync(ctx, ct).ConfigureAwait(false);
-        var v2Tracks = ctx.V2Info?.Audio ?? new();
 
         var cmd = new List<string> { "-y", "-hide_banner" };
 
@@ -343,16 +342,7 @@ public sealed class FfmpegMerger : IMerger
             for (int i = 0; i < ctx.V2AudIndices.Count; i++)
             {
                 int tidx = ctx.V2AudIndices[i];
-                double trackSt = 0.0;
-                foreach (var t in v2Tracks)
-                    if (t.Index == tidx) { trackSt = t.StartTime; break; }
                 IList<DetectedSegment> trackSegments = ctx.Segments!;
-                if (trackSt > 0.001)
-                    trackSegments = ctx.Segments!.Select(s => new DetectedSegment
-                    {
-                        V1Start = s.V1Start, V1End = s.V1End,
-                        Offset = s.Offset + trackSt, NInliers = s.NInliers,
-                    }).ToList();
 
                 double? trackGain = (v2Gains is not null && v2Gains.TryGetValue(tidx, out var g)) ? g : null;
                 var (fg, outLabel, nInputs) = BuildPiecewiseFilter(
@@ -391,10 +381,7 @@ public sealed class FfmpegMerger : IMerger
             for (int i = 0; i < ctx.V2AudIndices.Count; i++)
             {
                 int tidx = ctx.V2AudIndices[i];
-                double trackSt = 0.0;
-                foreach (var t in v2Tracks)
-                    if (t.Index == tidx) { trackSt = t.StartTime; break; }
-                double trackDelay = ctx.Offset + trackSt;
+                double trackDelay = ctx.Offset;
 
                 var filters = new List<string> { "asetpts=PTS-STARTPTS" };
                 if (trackDelay < -0.001)
@@ -463,7 +450,7 @@ public sealed class FfmpegMerger : IMerger
                 double trackSt = 0.0;
                 foreach (var t in v2Tracks)
                     if (t.Index == tidx) { trackSt = t.StartTime; break; }
-                double trackDelay = ctx.Offset + trackSt;
+                double trackDelay = ctx.Offset - trackSt;
                 if (trackDelay < -0.001)
                 {
                     cmd.Add("-ss"); cmd.Add(MergeHelpers.F6(Math.Abs(trackDelay)));
